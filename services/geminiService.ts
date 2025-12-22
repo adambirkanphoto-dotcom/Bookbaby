@@ -1,0 +1,1 @@
+// File deleted as per request to remove Smart Layout features.

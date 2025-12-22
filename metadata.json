@@ -1,0 +1,5 @@
+{
+  "name": "BookBaby",
+  "description": "An advanced photobook design studio featuring a reactive image library, drag-and-drop sequencing, and AI-powered smart layout generation.",
+  "requestFramePermissions": []
+}

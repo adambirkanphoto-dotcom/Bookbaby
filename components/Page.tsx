@@ -17,6 +17,7 @@ interface PageProps {
   onDeleteFrame: (pageIndex: number, frameId: string) => void;
   onDuplicateFrame: (pageIndex: number, frameId: string) => void;
   onAddFrame: (pageIndex: number, x?: number, y?: number) => void;
+  onInteractionStart?: () => void;
 }
 
 type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
@@ -45,7 +46,8 @@ export const Page: React.FC<PageProps> = ({
   onUpdateFrame,
   onDeleteFrame,
   onDuplicateFrame,
-  onAddFrame
+  onAddFrame,
+  onInteractionStart
 }) => {
   const [draggingFrame, setDraggingFrame] = useState<string | null>(null);
   const [resizingFrame, setResizingFrame] = useState<{ id: string; handle: ResizeHandle } | null>(null);
@@ -157,6 +159,9 @@ export const Page: React.FC<PageProps> = ({
     
     e.preventDefault();
     e.stopPropagation();
+    
+    if (onInteractionStart) onInteractionStart();
+    
     setDraggingFrame(frame.id);
     onSetActiveFrameId(frame.id);
     dragStartRef.current = { 
@@ -173,6 +178,9 @@ export const Page: React.FC<PageProps> = ({
   const startResizing = (e: React.MouseEvent, frame: Frame, handle: ResizeHandle) => {
     e.preventDefault();
     e.stopPropagation();
+    
+    if (onInteractionStart) onInteractionStart();
+
     setResizingFrame({ id: frame.id, handle });
     onSetActiveFrameId(frame.id);
     dragStartRef.current = { 

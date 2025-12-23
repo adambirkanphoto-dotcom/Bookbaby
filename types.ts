@@ -1,6 +1,11 @@
 
 export type SpreadDimension = '8x8' | '10x10' | 'A4_Landscape' | 'A4_Portrait' | 'Custom';
 
+export interface ImageOffset {
+  x: number;
+  y: number;
+}
+
 export interface PhotoImage {
   id: string;
   url: string;
@@ -8,18 +13,24 @@ export interface PhotoImage {
   aspectRatio: number;
 }
 
-export type PageLayout = 'single' | 'double' | 'grid-4' | 'spread';
+export interface Frame {
+  id: string;
+  imageId: string | null;
+  x: number; // Percentage (0-100)
+  y: number; // Percentage (0-100)
+  width: number; // Percentage (0-100)
+  height: number; // Percentage (0-100)
+  zIndex: number;
+  cropType: 'fill' | 'fit';
+  scale: number;
+  offset: ImageOffset;
+  isLocked: boolean;
+}
 
 export interface PageConfig {
   id: string;
-  layout: PageLayout;
-  cropType: 'fill' | 'fit';
-  margin: number; // 0-10 scale where 0 is full bleed
-}
-
-export interface SpreadData {
-  leftPage: PageConfig;
-  rightPage: PageConfig;
+  frames: Frame[];
+  margin: number; // 0-10 scale (bleed)
 }
 
 export interface AppState {

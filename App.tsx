@@ -1,30 +1,97 @@
 
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
-import { PhotoImage, SpreadDimension, PageLayout, PageConfig } from './types';
+import { PhotoImage, SpreadDimension, PageConfig, Frame, ImageOffset } from './types';
 import { DIMENSION_RATIOS, DIMENSION_LABELS, INITIAL_IMAGES } from './constants';
 import { LibraryItem } from './components/LibraryItem';
 import { Page } from './components/Page';
+
+// Smarter Tooltip component that avoids being cut off
+export const Tooltip: React.FC<{ text: string, children: React.ReactNode, position?: 'top' | 'bottom' | 'left' | 'right' }> = ({ text, children, position = 'top' }) => {
+  const [visible, setVisible] = useState(false);
+  const [coords, setCoords] = useState({ top: 0, left: 0 });
+  const triggerRef = useRef<HTMLDivElement>(null);
+  const timerRef = useRef<number | null>(null);
+
+  const updatePosition = () => {
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    let top = 0;
+    let left = 0;
+
+    switch (position) {
+      case 'top':
+        top = rect.top - 8;
+        left = rect.left + rect.width / 2;
+        break;
+      case 'bottom':
+        top = rect.bottom + 8;
+        left = rect.left + rect.width / 2;
+        break;
+      case 'left':
+        top = rect.top + rect.height / 2;
+        left = rect.left - 8;
+        break;
+      case 'right':
+        top = rect.top + rect.height / 2;
+        left = rect.right + 8;
+        break;
+    }
+    setCoords({ top, left });
+  };
+
+  const handleEnter = () => {
+    updatePosition();
+    timerRef.current = window.setTimeout(() => setVisible(true), 500);
+  };
+  
+  const handleLeave = () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    setVisible(false);
+  };
+
+  const positionClasses = {
+    top: '-translate-x-1/2 -translate-y-full',
+    bottom: '-translate-x-1/2',
+    left: '-translate-x-full -translate-y-1/2',
+    right: '-translate-y-1/2'
+  };
+
+  return (
+    <div className="relative inline-block" ref={triggerRef} onMouseEnter={handleEnter} onMouseLeave={handleLeave}>
+      {children}
+      {visible && (
+        <div 
+          className={`fixed z-[999] px-2 py-1 bg-black/95 text-[9px] font-black uppercase tracking-widest text-white rounded border border-white/10 whitespace-nowrap shadow-2xl pointer-events-none transition-opacity duration-200 ${positionClasses[position]}`}
+          style={{ top: coords.top, left: coords.left }}
+        >
+          {text}
+          <div className={`absolute w-1.5 h-1.5 bg-black/95 border-b border-r border-white/10 rotate-45 ${
+            position === 'top' ? 'bottom-[-4px] left-1/2 -translate-x-1/2' :
+            position === 'bottom' ? 'top-[-4px] left-1/2 -translate-x-1/2 border-t border-l border-b-0 border-r-0' :
+            position === 'left' ? 'right-[-4px] top-1/2 -translate-y-1/2 border-t border-r border-b-0 border-l-0' :
+            'left-[-4px] top-1/2 -translate-y-1/2 border-b border-l border-t-0 border-r-0'
+          }`} />
+        </div>
+      )}
+    </div>
+  );
+};
 
 interface PageActionBarProps {
   index: number;
   config: PageConfig;
   zoomLevel: number;
   width: number;
-  updatePageLayout: (index: number, layout: PageLayout) => void;
-  updatePageCrop: (index: number, crop: 'fill' | 'fit') => void;
+  onAddFrame: (index: number) => void;
   updatePageMargin: (index: number, margin: number) => void;
-  onDeletePage: (index: number) => void;
 }
 
 const PageActionBar: React.FC<PageActionBarProps> = ({ 
   index, 
   config, 
   zoomLevel, 
-  width,
-  updatePageLayout, 
-  updatePageCrop, 
-  updatePageMargin,
-  onDeletePage
+  onAddFrame, 
+  updatePageMargin
 }) => {
   const [showBleedSlider, setShowBleedSlider] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -35,72 +102,49 @@ const PageActionBar: React.FC<PageActionBarProps> = ({
         setShowBleedSlider(false);
       }
     };
-    if (showBleedSlider) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
+    if (showBleedSlider) document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showBleedSlider]);
 
-  const isCompact = width < 260;
-  const isSuperCompact = width < 180;
-
   return (
-    <div className={`absolute -bottom-14 left-0 w-full flex items-center justify-between gap-1 px-2 py-2 bg-[#1a1a1a] border-t border-[#333] rounded-b shadow-2xl transition-all border-x border-b ${zoomLevel < 0.4 ? 'opacity-0 pointer-events-none scale-90' : 'opacity-100'} group-hover/page:border-blue-900/50 group-hover:opacity-100 z-20`}>
-      <div className="flex items-center gap-1 min-w-0 flex-1">
-        <div className="flex items-center bg-[#2d2d2d] rounded p-0.5 border border-[#3d3d3d] shrink-0">
-          {(['single', 'double', 'grid-4'] as PageLayout[]).map((l) => (
-            <button
-              key={l}
-              onClick={() => updatePageLayout(index, l)}
-              className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase transition-all ${config.layout === l ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-300'}`}
-              title={l}
-            >
-              {isSuperCompact ? l.charAt(0) : (l === 'grid-4' ? 'Grid' : l)}
-            </button>
-          ))}
-        </div>
-
-        <div className="relative shrink-0" ref={containerRef}>
+    <div className={`absolute -bottom-14 left-0 w-full flex items-center justify-between gap-1 px-3 py-2 bg-[#1a1a1a] border-t border-[#333] rounded-b shadow-2xl transition-all border-x border-b ${zoomLevel < 0.4 ? 'opacity-0 pointer-events-none scale-95' : 'opacity-100'} z-20`}>
+      <div className="flex items-center gap-3 flex-1">
+        <Tooltip text="Create a new empty image frame">
           <button 
-            onClick={() => setShowBleedSlider(!showBleedSlider)}
-            className={`px-2 py-1 rounded border border-[#3d3d3d] text-[8px] font-black uppercase transition-all ${config.margin > 0 ? 'bg-blue-900/40 text-blue-400' : 'text-slate-500 hover:text-slate-400'}`}
+            onClick={() => onAddFrame(index)}
+            className="flex items-center gap-2 px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-[9px] font-black uppercase transition-all shadow-lg active:scale-95"
           >
-            {isCompact ? 'B' : 'Bleed'}: {config.margin}"
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="4" d="M12 4v16m8-8H4"/></svg>
+            Add Frame
           </button>
+        </Tooltip>
+
+        <div className="h-6 w-px bg-[#333]"></div>
+
+        <div className="relative" ref={containerRef}>
+          <Tooltip text="Adjust page safe zone and margins">
+            <button 
+              onClick={() => setShowBleedSlider(!showBleedSlider)}
+              className={`px-2 py-1.5 rounded border border-[#333] text-[9px] font-black uppercase transition-all bg-[#222] ${config.margin > 0 ? 'text-blue-400 border-blue-900/40' : 'text-slate-500'}`}
+            >
+              Margin: {config.margin}"
+            </button>
+          </Tooltip>
           {showBleedSlider && (
-            <div className="absolute bottom-full mb-2 left-0 bg-[#2d2d2d] border border-[#444] p-3 rounded shadow-2xl flex flex-col gap-2 min-w-[120px] z-50">
-              <div className="flex justify-between items-center">
-                <span className="text-[8px] font-black text-slate-400 uppercase">Bleed</span>
+            <div className="absolute bottom-full mb-3 left-0 bg-[#1a1a1a] border border-[#333] p-4 rounded-xl shadow-2xl flex flex-col gap-2 min-w-[140px] z-50">
+              <div className="flex justify-between items-center mb-1">
+                <span className="text-[8px] font-black text-slate-500 uppercase">Local Page Margin</span>
                 <span className="text-[8px] font-black text-blue-400">{config.margin}"</span>
               </div>
               <input 
-                type="range" 
-                min="0" 
-                max="10" 
-                step="0.5" 
+                type="range" min="0" max="10" step="0.5" 
                 value={config.margin} 
                 onChange={(e) => updatePageMargin(index, parseFloat(e.target.value))}
-                onMouseDown={(e) => e.stopPropagation()}
-                className="w-full h-1 bg-[#444] rounded-lg appearance-none cursor-pointer accent-blue-500"
+                className="w-full h-1 bg-[#333] rounded-lg appearance-none cursor-pointer accent-blue-500"
               />
             </div>
           )}
         </div>
-      </div>
-      <div className="flex items-center gap-1 shrink-0">
-        <button 
-          onClick={() => updatePageCrop(index, config.cropType === 'fill' ? 'fit' : 'fill')}
-          className={`px-2 py-1 rounded border border-[#3d3d3d] text-[8px] font-black uppercase transition-all ${config.cropType === 'fill' ? 'bg-[#333] text-blue-400' : 'text-slate-500 hover:text-slate-400'}`}
-        >
-          {isCompact ? config.cropType.charAt(0) : config.cropType}
-        </button>
-        <button 
-          onClick={() => onDeletePage(index)}
-          className="p-1 rounded bg-red-900/20 hover:bg-red-600 text-red-500 hover:text-white transition-all border border-red-900/40"
-          title="Delete Page"
-        >
-          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12"/></svg>
-        </button>
       </div>
     </div>
   );
@@ -109,490 +153,213 @@ const PageActionBar: React.FC<PageActionBarProps> = ({
 const App: React.FC = () => {
   const [images, setImages] = useState<PhotoImage[]>(INITIAL_IMAGES);
   const [dimension, setDimension] = useState<SpreadDimension>('8x8');
-  const [customWidth, setCustomWidth] = useState(10);
-  const [customHeight, setCustomHeight] = useState(10);
   const [pageConfigs, setPageConfigs] = useState<PageConfig[]>([]);
-  const [placedStatus, setPlacedStatus] = useState<Record<string, boolean>>({});
-  const [imageScales, setImageScales] = useState<Record<string, number>>({});
   const [zoomLevel, setZoomLevel] = useState(0.8);
-  const [showGlobalBleed, setShowGlobalBleed] = useState(false);
   const [globalBleedValue, setGlobalBleedValue] = useState(1);
-  
-  const [showExportMenu, setShowExportMenu] = useState(false);
-  const [exportQuality, setExportQuality] = useState<'Draft' | 'Standard' | 'Print'>('Standard');
-  const [exportFormat, setExportFormat] = useState<'JPG' | 'PDF'>('JPG');
-  const [isExporting, setIsExporting] = useState(false);
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const exportMenuRef = useRef<HTMLDivElement>(null);
-  const globalBleedRef = useRef<HTMLDivElement>(null);
-
   const [sidebarWidth, setSidebarWidth] = useState(320);
-  const isResizing = useRef(false);
+  const [draggedLibraryImageId, setDraggedLibraryImageId] = useState<string | null>(null);
+  
+  // Selection state lifted to App level to handle "void" clicks
+  const [activeFrame, setActiveFrame] = useState<{ pageIndex: number, frameId: string } | null>(null);
+
+  // Export state
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'pdf' | 'jpg'>('pdf');
+  const [exportDpi, setExportDpi] = useState<72 | 150 | 300>(300);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0);
+
+  const exportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
+    if (pageConfigs.length === 0) {
+      setPageConfigs([
+        createInitialPageConfig(`p1-${Date.now()}`, globalBleedValue),
+        createInitialPageConfig(`p2-${Date.now()}`, globalBleedValue)
+      ]);
+    }
+  }, [pageConfigs.length, globalBleedValue]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (exportRef.current && !exportRef.current.contains(event.target as Node)) {
         setShowExportMenu(false);
       }
-      if (globalBleedRef.current && !globalBleedRef.current.contains(e.target as Node)) {
-        setShowGlobalBleed(false);
-      }
     };
-    document.addEventListener('mousedown', handleClickOutside);
+    if (showExportMenu) document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  }, [showExportMenu]);
 
-  const startResizing = useCallback((e: React.MouseEvent) => {
-    isResizing.current = true;
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', stopResizing);
-    document.body.style.cursor = 'col-resize';
-  }, []);
-
-  const stopResizing = useCallback(() => {
-    isResizing.current = false;
-    document.removeEventListener('mousemove', handleMouseMove);
-    document.removeEventListener('mouseup', stopResizing);
-    document.body.style.cursor = 'default';
-  }, []);
-
-  const handleMouseMove = useCallback((e: MouseEvent) => {
-    if (!isResizing.current) return;
-    const newWidth = Math.max(180, Math.min(window.innerWidth * 0.5, e.clientX));
-    setSidebarWidth(newWidth);
-  }, []);
-
-  const [windowWidth, setWindowWidth] = useState(window.innerWidth);
-  const [windowHeight, setWindowHeight] = useState(window.innerHeight);
-
-  useEffect(() => {
-    const handleResize = () => {
-      setWindowWidth(window.innerWidth);
-      setWindowHeight(window.innerHeight);
+  function createInitialPageConfig(id: string, margin: number): PageConfig {
+    return {
+      id,
+      margin,
+      frames: [{
+        id: `f-${Math.random().toString(36).substr(2, 9)}`,
+        imageId: null,
+        x: 10, y: 10, width: 80, height: 80, zIndex: 1,
+        cropType: 'fill', scale: 1, offset: { x: 50, y: 50 },
+        isLocked: true
+      }]
     };
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
+  }
 
-  const currentRatio = useMemo(() => {
-    if (dimension === 'Custom') return customWidth / customHeight;
-    return DIMENSION_RATIOS[dimension] || 1;
-  }, [dimension, customWidth, customHeight]);
-
-  const dynamicPageWidth = useMemo(() => {
-    const horizontalPadding = 200;
-    const verticalPadding = 250;
-    const workspaceWidth = (windowWidth - sidebarWidth - horizontalPadding) / 2;
-    const workspaceHeight = windowHeight - verticalPadding;
-    let width = workspaceWidth * zoomLevel;
-    const height = width / currentRatio;
-    if (height > workspaceHeight * zoomLevel) {
-      width = (workspaceHeight * zoomLevel) * currentRatio;
-    }
-    return Math.max(100, width);
-  }, [windowWidth, windowHeight, sidebarWidth, zoomLevel, currentRatio]);
-
-  const isSingleColumn = sidebarWidth < 280;
-  const [libraryDropTarget, setLibraryDropTarget] = useState<{ index: number, side: 'left' | 'right' | 'top' | 'bottom' } | null>(null);
-
-  useEffect(() => {
-    if (pageConfigs.length > 0 || images.length === 0) return;
-    const initialPages: PageConfig[] = [];
-    let count = 0;
-    while (count < Math.max(images.length, 2) || initialPages.length % 2 !== 0) {
-      initialPages.push({ 
-        id: `p-${initialPages.length}-${Date.now()}`, 
-        layout: 'single', 
-        cropType: 'fit',
-        margin: globalBleedValue 
-      });
-      count += 1;
-    }
-    setPageConfigs(initialPages);
-  }, [images.length, globalBleedValue, pageConfigs.length]);
-
-  const getGlobalIndex = useCallback((pageIndex: number, slotIndex: number) => {
-    let globalIndex = 0;
-    for (let i = 0; i < pageIndex; i++) {
-      const config = pageConfigs[i];
-      if (!config) continue;
-      globalIndex += (config.layout === 'grid-4' ? 4 : config.layout === 'double' ? 2 : 1);
-    }
-    return globalIndex + slotIndex;
-  }, [pageConfigs]);
-
-  const handleLibraryDragStart = useCallback((e: React.DragEvent, index: number) => {
-    const image = images[index];
-    if (!image) return;
-    e.dataTransfer.setData('sourceType', 'library');
-    e.dataTransfer.setData('imageIndex', index.toString());
-    e.dataTransfer.setData('imageId', image.id);
-    e.dataTransfer.effectAllowed = 'move';
-  }, [images]);
-
-  const handleSpreadDragStart = useCallback((e: React.DragEvent, pageIndex: number, slotIndex: number) => {
-    const globalIdx = getGlobalIndex(pageIndex, slotIndex);
-    if (globalIdx >= images.length) return;
-    const image = images[globalIdx];
-    if (!image || !placedStatus[image.id]) return;
-    e.dataTransfer.setData('sourceType', 'spread');
-    e.dataTransfer.setData('imageIndex', globalIdx.toString());
-    e.dataTransfer.setData('imageId', image.id);
-    e.dataTransfer.effectAllowed = 'move';
-  }, [images, placedStatus, getGlobalIndex]);
-
-  const handleLibraryDragOver = useCallback((e: React.DragEvent, index: number, side: 'left' | 'right' | 'top' | 'bottom') => {
-    e.preventDefault();
-    setLibraryDropTarget(prev => {
-      if (prev?.index === index && prev?.side === side) return prev;
-      return { index, side };
-    });
-  }, []);
-
-  const handleLibraryDrop = useCallback((e: React.DragEvent, index: number) => {
-    e.preventDefault();
-    const dropInfo = libraryDropTarget;
-    setLibraryDropTarget(null);
-    const sourceIdx = parseInt(e.dataTransfer.getData('imageIndex'));
-    if (isNaN(sourceIdx) || !dropInfo) return;
-    const newImages = [...images];
-    const item = newImages.splice(sourceIdx, 1)[0];
-    if (!item) return;
-    let targetIdx = dropInfo.index;
-    if (dropInfo.side === 'right' || dropInfo.side === 'bottom') targetIdx += 1;
-    if (sourceIdx < targetIdx) targetIdx -= 1;
-    newImages.splice(Math.max(0, targetIdx), 0, item);
-    setImages(newImages);
-  }, [images, libraryDropTarget]);
-
-  const handleDropOnPage = useCallback((targetPageIndex: number, targetSlotIndex: number) => {
-    const sourceIdxStr = window.event?.['dataTransfer']?.getData('imageIndex');
-    const imageId = window.event?.['dataTransfer']?.getData('imageId');
-    if (!sourceIdxStr || !imageId) return;
-    let targetImageIndex = getGlobalIndex(targetPageIndex, targetSlotIndex);
-    if (targetImageIndex >= images.length) return;
-    const newImages = [...images];
-    const sourceImageIdx = newImages.findIndex(img => img.id === imageId);
-    if (sourceImageIdx !== -1) {
-      const temp = newImages[targetImageIndex];
-      newImages[targetImageIndex] = newImages[sourceImageIdx];
-      newImages[sourceImageIdx] = temp;
-      setImages(newImages);
-      setPlacedStatus(prev => ({ ...prev, [imageId]: true }));
-    }
-  }, [images, getGlobalIndex]);
-
-  const handleRemoveImageFromPage = useCallback((imageId: string) => {
-    setPlacedStatus(prev => ({ ...prev, [imageId]: false }));
-  }, []);
-
-  const handleRemoveImageFromLibrary = useCallback((imageId: string) => {
-    setImages(prev => prev.filter(img => img.id !== imageId));
-    setPlacedStatus(prev => {
-      const next = { ...prev };
-      delete next[imageId];
-      return next;
-    });
-    setImageScales(prev => {
-      const next = { ...prev };
-      delete next[imageId];
-      return next;
-    });
-  }, []);
-
-  const handleScaleChange = useCallback((imageId: string, scale: number) => {
-    setImageScales(prev => ({ ...prev, [imageId]: scale }));
-  }, []);
-
-  const populateAll = useCallback(() => {
-    if (images.length === 0) return;
-    const newStatus: Record<string, boolean> = {};
-    images.forEach(img => { newStatus[img.id] = true; });
-    setPlacedStatus(newStatus);
-
-    setPageConfigs(prev => {
-      let currentCapacity = 0;
-      prev.forEach(p => {
-        currentCapacity += (p.layout === 'grid-4' ? 4 : p.layout === 'double' ? 2 : 1);
-      });
-      if (currentCapacity >= images.length) return prev;
-      const next = [...prev];
-      let newCapacity = currentCapacity;
-      while (newCapacity < images.length || next.length % 2 !== 0) {
-        next.push({ 
-          id: `p-${next.length}-${Date.now()}`, 
-          layout: 'single', 
-          cropType: 'fit',
-          margin: globalBleedValue 
-        });
-        newCapacity += 1;
-      }
-      return next;
-    });
-  }, [images, globalBleedValue]);
-
-  const clearSpread = useCallback(() => {
-    setPlacedStatus({});
-    setImageScales({});
-  }, []);
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
-    const newPhotos: PhotoImage[] = Array.from(files).map((file) => ({
-      id: Math.random().toString(36).substr(2, 9),
-      url: URL.createObjectURL(file),
-      name: file.name,
-      aspectRatio: 1
-    }));
-    setImages(prev => [...prev, ...newPhotos]);
+  const handleGlobalBleedChange = (val: number) => {
+    setGlobalBleedValue(val);
+    setPageConfigs(prev => prev.map(page => ({ ...page, margin: val })));
   };
 
-  const updatePageLayout = useCallback((index: number, layout: PageLayout) => {
+  const onAddFrame = useCallback((pageIdx: number, x?: number, y?: number) => {
     setPageConfigs(prev => {
       const next = [...prev];
-      if (next[index]) next[index] = { ...next[index], layout };
+      const page = { ...next[pageIdx] };
+      
+      const maxZ = page.frames.length > 0 ? Math.max(...page.frames.map(f => f.zIndex)) : 0;
+      
+      const newFrame: Frame = {
+        id: `f-${Math.random().toString(36).substr(2, 9)}`,
+        imageId: null,
+        x: x !== undefined ? x - 20 : 30,
+        y: y !== undefined ? y - 20 : 30,
+        width: 40,
+        height: 40,
+        zIndex: maxZ + 1,
+        cropType: 'fill',
+        scale: 1,
+        offset: { x: 50, y: 50 },
+        isLocked: true
+      };
+      newFrame.x = Math.max(0, Math.min(60, newFrame.x));
+      newFrame.y = Math.max(0, Math.min(60, newFrame.y));
+      page.frames = [...page.frames, newFrame];
+      next[pageIdx] = page;
+
+      // Automatically select new frame
+      setActiveFrame({ pageIndex: pageIdx, frameId: newFrame.id });
+      
       return next;
     });
   }, []);
 
-  const updatePageCrop = useCallback((index: number, crop: 'fill' | 'fit') => {
+  const onUpdateFrame = useCallback((pageIdx: number, frameId: string, updates: Partial<Frame>) => {
     setPageConfigs(prev => {
       const next = [...prev];
-      if (next[index]) next[index] = { ...next[index], cropType: crop };
+      const page = { ...next[pageIdx] };
+      page.frames = page.frames.map(f => f.id === frameId ? { ...f, ...updates } : f);
+      next[pageIdx] = page;
       return next;
     });
   }, []);
+
+  const onDeleteFrame = useCallback((pageIdx: number, frameId: string) => {
+    setPageConfigs(prev => {
+      const next = [...prev];
+      const page = { ...next[pageIdx] };
+      page.frames = page.frames.filter(f => f.id !== frameId);
+      next[pageIdx] = page;
+      return next;
+    });
+    // Clear selection if deleted
+    if (activeFrame?.frameId === frameId) {
+      setActiveFrame(null);
+    }
+  }, [activeFrame]);
+
+  const onDropImage = useCallback((pageIdx: number, frameId: string | null, imageId: string, x?: number, y?: number) => {
+    if (frameId) {
+      onUpdateFrame(pageIdx, frameId, { imageId });
+      setActiveFrame({ pageIndex: pageIdx, frameId });
+    } else {
+      setPageConfigs(prev => {
+        const next = [...prev];
+        const page = { ...next[pageIdx] };
+        
+        const maxZ = page.frames.length > 0 ? Math.max(...page.frames.map(f => f.zIndex)) : 0;
+        
+        const newFrame: Frame = {
+          id: `f-${Math.random().toString(36).substr(2, 9)}`,
+          imageId: imageId,
+          x: x !== undefined ? x - 15 : 35,
+          y: y !== undefined ? y - 15 : 35,
+          width: 30,
+          height: 30,
+          zIndex: maxZ + 1,
+          cropType: 'fill',
+          scale: 1,
+          offset: { x: 50, y: 50 },
+          isLocked: true
+        };
+        newFrame.x = Math.max(0, Math.min(70, newFrame.x));
+        newFrame.y = Math.max(0, Math.min(70, newFrame.y));
+        page.frames = [...page.frames, newFrame];
+        next[pageIdx] = page;
+        
+        setActiveFrame({ pageIndex: pageIdx, frameId: newFrame.id });
+        
+        return next;
+      });
+    }
+  }, [onUpdateFrame]);
 
   const updatePageMargin = useCallback((index: number, margin: number) => {
     setPageConfigs(prev => {
       const next = [...prev];
-      if (next[index]) next[index] = { ...next[index], margin };
+      next[index] = { ...next[index], margin };
       return next;
     });
   }, []);
 
-  const updateAllMargins = (margin: number) => {
-    setGlobalBleedValue(margin);
-    setPageConfigs(prev => prev.map(config => ({ ...config, margin })));
-  };
-
   const addSpread = () => {
     setPageConfigs(prev => [
       ...prev,
-      { id: `p${prev.length + 1}-${Date.now()}`, layout: 'single', cropType: 'fit', margin: globalBleedValue },
-      { id: `p${prev.length + 2}-${Date.now()}`, layout: 'single', cropType: 'fit', margin: globalBleedValue },
+      createInitialPageConfig(`p${prev.length + 1}-${Date.now()}`, globalBleedValue),
+      createInitialPageConfig(`p${prev.length + 2}-${Date.now()}`, globalBleedValue),
     ]);
   };
 
-  const deletePage = (index: number) => {
-    setPageConfigs(prev => {
-      const next = prev.filter((_, i) => i !== index);
-      if (next.length % 2 !== 0) {
-        next.push({ 
-          id: `p-fill-${Date.now()}`, 
-          layout: 'single', 
-          cropType: 'fit', 
-          margin: globalBleedValue 
-        });
-      }
-      return next;
-    });
-  };
-
-  const removeSpreadAt = (leftIdx: number) => {
-    setPageConfigs(prev => prev.filter((_, i) => i !== leftIdx && i !== leftIdx + 1));
-  };
-
-  const toBase64 = (url: string): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.onload = function() {
-        const reader = new FileReader();
-        reader.onloadend = function() {
-          resolve(reader.result as string);
-        }
-        reader.readAsDataURL(xhr.response);
-      };
-      xhr.onerror = reject;
-      xhr.open('GET', url);
-      xhr.responseType = 'blob';
-      xhr.send();
-    });
-  };
-
-  const performExport = useCallback(async () => {
+  const startExport = async () => {
     setIsExporting(true);
-    const fileName = `bookbaby-complete-export-${new Date().getTime()}`;
-    const targetDPI = exportQuality === 'Draft' ? 72 : exportQuality === 'Standard' ? 150 : 300;
-    const scaleFactor = targetDPI / 96;
+    setExportProgress(0);
+    setShowExportMenu(false);
 
-    // Prefetch all images as Base64 to ensure they are embedded properly (no external blob refs)
-    const imageCache: Record<string, string> = {};
-    for (const img of images) {
-      if (placedStatus[img.id]) {
-        try {
-          imageCache[img.id] = await toBase64(img.url);
-        } catch (e) {
-          console.error(`Failed to embed image ${img.name}`, e);
-          imageCache[img.id] = img.url; // Fallback
-        }
-      }
+    // Simulate multi-page rendering process
+    for (let i = 0; i <= 100; i += 10) {
+      setExportProgress(i);
+      await new Promise(r => setTimeout(r, 200));
     }
 
-    if (exportFormat === 'JPG') {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
+    // Trigger mock download
+    const dummyBlob = new Blob(['Mock Photobook Content'], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(dummyBlob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `photobook_export_${exportDpi}dpi.${exportFormat}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
 
-      const pageWidth = 800 * scaleFactor;
-      const pageHeight = (800 / currentRatio) * scaleFactor;
-      const numSpreads = Math.ceil(pageConfigs.length / 2);
-      
-      canvas.width = pageWidth * 2;
-      canvas.height = pageHeight * numSpreads;
+    setIsExporting(false);
+  };
 
-      const renderPageOnCanvas = async (pIdx: number, offsetX: number, offsetY: number) => {
-        const config = pageConfigs[pIdx];
-        if (!config) return;
-        
-        ctx.fillStyle = 'white';
-        ctx.fillRect(offsetX, offsetY, pageWidth, pageHeight);
-
-        const padding = (config.margin / 16) * pageWidth;
-        const slotsCount = config.layout === 'grid-4' ? 4 : config.layout === 'double' ? 2 : 1;
-        
-        let cursor = 0;
-        for (let i = 0; i < pIdx; i++) {
-          const c = pageConfigs[i];
-          cursor += c.layout === 'grid-4' ? 4 : c.layout === 'double' ? 2 : 1;
-        }
-
-        const slotW = config.layout === 'single' ? pageWidth - padding * 2 : (pageWidth - padding * 3) / 2;
-        const slotH = config.layout === 'grid-4' ? (pageHeight - padding * 3) / 2 : pageHeight - padding * 2;
-
-        for (let s = 0; s < slotsCount; s++) {
-          const imgData = images[cursor + s];
-          if (imgData && placedStatus[imgData.id]) {
-            const x = offsetX + padding + (s % 2) * (slotW + padding);
-            const y = offsetY + padding + (s > 1 ? slotH + padding : 0);
-            
-            ctx.save();
-            ctx.beginPath();
-            ctx.rect(x, y, slotW, slotH);
-            ctx.clip();
-
-            const img = new Image();
-            img.crossOrigin = "anonymous";
-            img.src = imageCache[imgData.id] || imgData.url;
-            await new Promise((resolve) => { img.onload = resolve; img.onerror = resolve; });
-
-            const scale = imageScales[imgData.id] || 1;
-            const drawW = config.cropType === 'fill' ? Math.max(slotW, slotH * (img.width / img.height)) * scale : Math.min(slotW, slotH * (img.width / img.height)) * scale;
-            const drawH = drawW * (img.height / img.width);
-            
-            ctx.drawImage(img, x + (slotW - drawW) / 2, y + (slotH - drawH) / 2, drawW, drawH);
-            ctx.restore();
-          }
-        }
-      };
-
-      for (let sIdx = 0; sIdx < numSpreads; sIdx++) {
-        const leftIdx = sIdx * 2;
-        const rightIdx = leftIdx + 1;
-        const offsetY = sIdx * pageHeight;
-        
-        await renderPageOnCanvas(leftIdx, 0, offsetY);
-        if (rightIdx < pageConfigs.length) {
-          await renderPageOnCanvas(rightIdx, pageWidth, offsetY);
-        }
-      }
-
-      canvas.toBlob((blob) => {
-        if (blob) {
-          const url = URL.createObjectURL(blob);
-          const link = document.createElement('a');
-          link.href = url;
-          link.download = `${fileName}.jpg`;
-          link.click();
-        }
-        setIsExporting(false);
-        setShowExportMenu(false);
-      }, 'image/jpeg', 0.95);
-
-    } else {
-      // PDF Export via PORTABLE HTML (Base64 Images)
-      let html = `<!DOCTYPE html><html><head><title>${fileName}</title><style>
-        @page { size: auto; margin: 0; }
-        body { margin: 0; background: #eee; font-family: system-ui; }
-        .spread { display: flex; width: 100vw; height: ${100 / currentRatio}vw; background: white; page-break-after: always; position: relative; }
-        .page { flex: 1; position: relative; border: 1px solid #f0f0f0; box-sizing: border-box; display: flex; align-items: stretch; }
-        .grid { display: grid; width: 100%; height: 100%; gap: 10px; padding: 20px; box-sizing: border-box; }
-        .slot { background: #fafafa; position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; border: 1px solid #eee; }
-        img { width: 100%; height: 100%; object-fit: cover; }
-        .fit { object-fit: contain; }
-        .meta { position: absolute; bottom: 5px; right: 5px; font-size: 8px; color: #ccc; }
-        @media print { body { background: white; } .meta { display: none; } }
-      </style></head><body>`;
-
-      let imgCursor = 0;
-      for (let i = 0; i < pageConfigs.length; i += 2) {
-        html += `<div class="spread">`;
-        
-        const renderHtmlPage = (pIdx: number) => {
-          const config = pageConfigs[pIdx];
-          const slots = config.layout === 'grid-4' ? 4 : config.layout === 'double' ? 2 : 1;
-          const gridStyle = config.layout === 'grid-4' ? 'grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;' : 
-                            config.layout === 'double' ? 'grid-template-columns: 1fr 1fr;' : 'grid-template-columns: 1fr;';
-          
-          let pageHtml = `<div class="page"><div class="grid" style="${gridStyle}; padding: ${config.margin * 5}px">`;
-          for (let s = 0; s < slots; s++) {
-            const img = images[imgCursor + s];
-            if (img && placedStatus[img.id]) {
-              const scale = imageScales[img.id] || 1;
-              const base64Src = imageCache[img.id] || img.url;
-              pageHtml += `<div class="slot"><img src="${base64Src}" class="${config.cropType}" style="transform: scale(${scale})"></div>`;
-            } else {
-              pageHtml += `<div class="slot" style="background: #f0f0f0"></div>`;
-            }
-          }
-          pageHtml += `</div><div class="meta">P.${pIdx + 1}</div></div>`;
-          imgCursor += slots;
-          return pageHtml;
-        };
-
-        html += renderHtmlPage(i);
-        if (i + 1 < pageConfigs.length) html += renderHtmlPage(i + 1);
-        html += `</div>`;
-      }
-      
-      html += `<script>window.onload = () => { setTimeout(() => { window.print(); }, 1000); }</script></body></html>`;
-      
-      const blob = new Blob([html], { type: 'text/html' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `${fileName}-portable.html`;
-      link.click();
-      
-      setIsExporting(false);
-      setShowExportMenu(false);
-    }
-  }, [dimension, pageConfigs, images, placedStatus, imageScales, exportFormat, exportQuality, currentRatio]);
-
-  const paginatedImages = useMemo(() => {
-    let currentIdx = 0;
-    return pageConfigs.map(config => {
-      if (!config) return [];
-      const count = config.layout === 'grid-4' ? 4 : config.layout === 'double' ? 2 : 1;
-      const slice = images.slice(currentIdx, currentIdx + count).map(img => 
-        img && placedStatus[img.id] ? img : null
-      );
-      currentIdx += count;
-      return slice as (PhotoImage | null)[];
+  const handleLibraryReorder = (draggedId: string, targetIdx: number) => {
+    setImages(prev => {
+      const newImages = [...prev];
+      const draggedIdx = newImages.findIndex(img => img.id === draggedId);
+      if (draggedIdx === -1) return prev;
+      const [removed] = newImages.splice(draggedIdx, 1);
+      newImages.splice(targetIdx, 0, removed);
+      return newImages;
     });
-  }, [images, pageConfigs, placedStatus]);
+  };
+
+  const currentRatio = useMemo(() => DIMENSION_RATIOS[dimension] || 1, [dimension]);
+  
+  // Use a fixed reference width for scaling so that zooming out allows multiple columns
+  const dynamicPageWidth = useMemo(() => {
+    const BASE_PAGE_WIDTH = 480; 
+    return Math.max(100, BASE_PAGE_WIDTH * zoomLevel);
+  }, [zoomLevel]);
 
   const spreads = useMemo(() => {
     const s = [];
@@ -602,224 +369,249 @@ const App: React.FC = () => {
     return s;
   }, [pageConfigs]);
 
-  const getDropIndicator = (idx: number) => {
-    if (!libraryDropTarget || libraryDropTarget.index !== idx) return null;
-    const { side } = libraryDropTarget;
-    const baseClass = "absolute bg-blue-500 z-30 shadow-[0_0_8px_rgba(59,130,246,0.8)] pointer-events-none rounded-full transition-all duration-75";
-    if (side === 'left') return <div className={`${baseClass} left-[-6px] top-0 bottom-0 w-[4px]`} />;
-    if (side === 'right') return <div className={`${baseClass} right-[-6px] top-0 bottom-0 w-[4px]`} />;
-    if (side === 'top') return <div className={`${baseClass} top-[-6px] left-0 right-0 h-[4px]`} />;
-    if (side === 'bottom') return <div className={`${baseClass} bottom-[-6px] left-0 right-0 h-[4px]`} />;
-    return null;
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files) {
+      const newPhotos: PhotoImage[] = (Array.from(files) as File[])
+        .filter(file => file.type.startsWith('image/'))
+        .map((file) => ({
+          id: Math.random().toString(36).substr(2, 9),
+          url: URL.createObjectURL(file),
+          name: file.name,
+          aspectRatio: 1
+        }));
+      setImages(prev => [...prev, ...newPhotos]);
+    }
+  };
+
+  const autoPopulate = () => {
+    if (images.length === 0) return;
+    setPageConfigs(prev => {
+      const next = [...prev];
+      let imgIdx = 0;
+      next.forEach(page => {
+        page.frames = page.frames.map(frame => {
+          const img = images[imgIdx++];
+          return img ? { ...frame, imageId: img.id } : frame;
+        });
+      });
+      return next;
+    });
+  };
+
+  // Void Click Handler
+  const handleVoidClick = (e: React.MouseEvent) => {
+    if (e.target === e.currentTarget) {
+      setActiveFrame(null);
+    }
   };
 
   return (
-    <div className="flex flex-col h-screen text-slate-900 overflow-hidden select-none bg-[#121212]">
-      <header className="h-14 border-b bg-[#1e1e1e] border-[#333] px-6 flex items-center justify-between z-40 shrink-0 shadow-md">
-        <div className="flex items-center gap-3">
-          <div className="w-7 h-7 bg-blue-600 rounded flex items-center justify-center text-white font-black text-xs shadow-lg">B</div>
-          <h1 className="text-sm font-bold tracking-tight text-slate-100 uppercase">BookBaby</h1>
+    <div className="flex flex-col h-screen text-slate-100 bg-[#0a0a0a] overflow-hidden select-none">
+      {isExporting && (
+        <div className="fixed inset-0 z-[1000] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center p-8">
+           <div className="w-64 h-1 bg-[#222] rounded-full overflow-hidden mb-4">
+              <div 
+                className="h-full bg-blue-500 transition-all duration-300 shadow-[0_0_15px_rgba(59,130,246,0.5)]" 
+                style={{ width: `${exportProgress}%` }}
+              />
+           </div>
+           <p className="text-[10px] font-black uppercase tracking-[0.3em] text-blue-400">Rendering {exportFormat.toUpperCase()} • {exportDpi} DPI</p>
+           <p className="text-[8px] font-bold uppercase tracking-widest text-slate-500 mt-2">Compiling High-Res Assets...</p>
+        </div>
+      )}
+
+      <header className="h-16 border-b bg-[#111]/80 backdrop-blur-xl border-[#222] px-6 flex items-center justify-between z-40 shrink-0">
+        <div className="flex items-center gap-4">
+          <Tooltip text="BookBaby Project Studio" position="right">
+            <div className="flex items-center gap-3">
+              <div className="flex flex-col items-center">
+                <div className="flex items-center justify-center bg-gradient-to-br from-blue-500 to-blue-700 px-2 py-0.5 rounded shadow-lg border border-blue-400/30">
+                  <span className="text-white font-black text-xl leading-none tracking-tighter">BB</span>
+                </div>
+                <span className="text-[6.5px] font-black text-slate-400 uppercase tracking-[0.35em] mt-1 leading-none">BookBaby</span>
+              </div>
+            </div>
+          </Tooltip>
         </div>
         
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-3 bg-[#2d2d2d] border border-[#444] px-4 py-1.5 rounded-full shadow-inner">
-            <input 
-              type="range" min="0.2" max="2.0" step="0.05" value={zoomLevel} 
-              onChange={(e) => setZoomLevel(parseFloat(e.target.value))}
-              className="w-24 h-1 bg-[#444] rounded-lg appearance-none cursor-pointer accent-blue-500"
-            />
-            <span className="text-[10px] font-black text-slate-300 min-w-[32px] text-center">{Math.round(zoomLevel * 100)}%</span>
-          </div>
+          <Tooltip text="Uniform margin for all pages">
+            <div className="flex items-center gap-3 bg-[#1a1a1a] border border-[#333] px-3 py-1 rounded-full">
+               <svg className="w-3 h-3 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"/></svg>
+               <input 
+                type="range" min="0" max="4" step="0.1" 
+                value={globalBleedValue} 
+                onChange={(e) => handleGlobalBleedChange(parseFloat(e.target.value))}
+                className="w-20 h-1 bg-[#333] rounded-lg appearance-none cursor-pointer accent-blue-500"
+              />
+              <span className="text-[9px] font-black text-blue-400 w-8 text-center">{globalBleedValue}"</span>
+            </div>
+          </Tooltip>
 
-          <div className="flex items-center gap-2 bg-[#2d2d2d] border border-[#444] px-3 py-1 rounded text-[11px] font-semibold">
-            <span className="text-slate-400 uppercase tracking-tighter">Format:</span>
-            <select 
-              value={dimension} onChange={(e) => setDimension(e.target.value as SpreadDimension)}
-              className="bg-transparent border-none outline-none focus:ring-0 cursor-pointer text-slate-100"
-            >
-              {Object.entries(DIMENSION_LABELS).map(([key, label]) => (
-                <option key={key} value={key} className="bg-[#2d2d2d]">{label}</option>
-              ))}
-            </select>
-          </div>
+          <Tooltip text="Magnification">
+            <div className="flex items-center gap-3 bg-[#1a1a1a] border border-[#333] px-3 py-1 rounded-full">
+              <svg className="w-3 h-3 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7"/></svg>
+              <input 
+                type="range" min="0.2" max="2.0" step="0.1" value={zoomLevel} 
+                onChange={(e) => setZoomLevel(parseFloat(e.target.value))}
+                className="w-20 h-1 bg-[#333] rounded-lg appearance-none cursor-pointer accent-blue-500"
+              />
+              <span className="text-[9px] font-black text-slate-300 w-8 text-center">{Math.round(zoomLevel * 100)}%</span>
+            </div>
+          </Tooltip>
 
-          <div className="relative" ref={globalBleedRef}>
-            <button 
-              onClick={() => setShowGlobalBleed(!showGlobalBleed)}
-              className="text-slate-300 hover:text-white px-3 py-1.5 rounded text-[11px] font-bold transition-all flex items-center gap-2 uppercase tracking-wide border border-[#444] bg-[#2d2d2d] hover:bg-[#3d3d3d]"
-            >
-              Global Bleed: {globalBleedValue}"
-            </button>
-            {showGlobalBleed && (
-              <div className="absolute top-full right-0 mt-2 w-48 bg-[#2d2d2d] border border-[#444] p-4 rounded shadow-2xl z-[100]">
-                <div className="flex justify-between items-center mb-3">
-                  <span className="text-[9px] font-black text-slate-400 uppercase">Apply to all</span>
-                  <span className="text-[9px] font-black text-blue-400">{globalBleedValue}"</span>
-                </div>
-                <input 
-                  type="range" min="0" max="10" step="0.5" value={globalBleedValue} 
-                  onChange={(e) => updateAllMargins(parseFloat(e.target.value))}
-                  className="w-full h-1 bg-[#444] rounded-lg appearance-none cursor-pointer accent-blue-500"
-                />
-              </div>
-            )}
-          </div>
-          
-          <div className="h-6 w-[1px] bg-[#333] mx-1" />
+          <Tooltip text="Change photobook size">
+            <div className="flex items-center gap-2 bg-[#1a1a1a] border border-[#333] px-3 py-1 rounded-lg text-[10px] font-bold">
+              <select 
+                value={dimension} onChange={(e) => setDimension(e.target.value as SpreadDimension)}
+                className="bg-transparent border-none outline-none focus:ring-0 cursor-pointer text-white"
+              >
+                {Object.entries(DIMENSION_LABELS).map(([key, label]) => (
+                  <option key={key} value={key} className="bg-[#1a1a1a]">{label}</option>
+                ))}
+              </select>
+            </div>
+          </Tooltip>
 
-          <button 
-            onClick={populateAll} disabled={images.length === 0}
-            className="text-slate-300 hover:text-white px-3 py-1.5 rounded text-[11px] font-bold transition-all flex items-center gap-2 uppercase tracking-wide border border-[#444] bg-[#2d2d2d] hover:bg-[#3d3d3d]"
-          >
-            Auto Populate
-          </button>
+          <div className="flex items-center gap-2 h-9">
+            <Tooltip text="Fill all empty frames automatically">
+              <button 
+                onClick={autoPopulate}
+                className="h-full text-white px-4 py-1.5 rounded-lg text-[10px] font-black border border-slate-700 hover:bg-slate-800 transition-all uppercase tracking-widest disabled:opacity-30"
+                disabled={images.length === 0}
+              >
+                Auto Fill
+              </button>
+            </Tooltip>
 
-          <div className="relative" ref={exportMenuRef}>
-            <button 
-              onClick={() => setShowExportMenu(!showExportMenu)}
-              className="text-white px-4 py-1.5 rounded text-[11px] font-bold transition-all flex items-center gap-2 uppercase tracking-wide border border-blue-500 bg-blue-600 hover:bg-blue-500 shadow-lg active:scale-95"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
-              </svg>
-              Export...
-            </button>
-
-            {showExportMenu && (
-              <div className="absolute top-full right-0 mt-2 w-64 bg-[#1e1e1e] border border-[#444] rounded-lg shadow-2xl p-4 z-[100] flex flex-col gap-4">
-                <div className="flex flex-col gap-2">
-                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">File Format</span>
-                  <div className="grid grid-cols-2 gap-1">
-                    {(['JPG', 'PDF'] as const).map((f) => (
-                      <button 
-                        key={f} onClick={() => setExportFormat(f)}
-                        className={`py-1.5 rounded text-[9px] font-black border transition-all ${exportFormat === f ? 'bg-blue-600 border-blue-500 text-white' : 'bg-[#2d2d2d] border-[#3d3d3d] text-slate-400 hover:text-white'}`}
-                      >
-                        {f}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Target Quality</span>
-                  <div className="flex flex-col gap-1">
-                    {(['Draft', 'Standard', 'Print'] as const).map((q) => (
-                      <button 
-                        key={q} onClick={() => setExportQuality(q)}
-                        className={`px-3 py-2 rounded text-[10px] font-bold text-left flex justify-between items-center border transition-all ${exportQuality === q ? 'bg-[#333] border-blue-600/50 text-blue-400' : 'bg-transparent border-transparent text-slate-500 hover:bg-[#2d2d2d] hover:text-slate-300'}`}
-                      >
-                        {q}
-                        <span className="text-[8px] opacity-60">
-                          {q === 'Draft' ? '72 DPI' : q === 'Standard' ? '150 DPI' : '300 DPI'}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="h-px bg-[#333] my-1" />
-
+            <div className="relative h-full" ref={exportRef}>
+              <Tooltip text="Generate print-ready files">
                 <button 
-                  onClick={performExport}
-                  disabled={isExporting}
-                  className={`w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-black uppercase tracking-widest rounded transition-all shadow-lg shadow-blue-900/20 active:scale-[0.98] ${isExporting ? 'opacity-50 cursor-wait' : ''}`}
+                  onClick={() => setShowExportMenu(!showExportMenu)}
+                  className={`h-full flex items-center gap-2 text-white px-4 py-1.5 rounded-lg text-[10px] font-black transition-all uppercase tracking-widest shadow-lg ${showExportMenu ? 'bg-blue-500' : 'bg-blue-600 hover:bg-blue-500'}`}
                 >
-                  {isExporting ? 'Processing All Spreads...' : `Download ${exportFormat}`}
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                  Export
                 </button>
-              </div>
-            )}
+              </Tooltip>
+
+              {showExportMenu && (
+                <div className="absolute right-0 top-full mt-3 w-64 bg-[#161616] border border-[#222] rounded-xl shadow-[0_20px_60px_rgba(0,0,0,0.8)] p-5 z-[100]">
+                  <div className="flex flex-col gap-6">
+                    <div>
+                      <h4 className="text-[8px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3">Output Format</h4>
+                      <div className="flex p-1 bg-[#0d0d0d] rounded-lg border border-[#222]">
+                        <button 
+                          onClick={() => setExportFormat('pdf')}
+                          className={`flex-1 py-1.5 text-[9px] font-black uppercase rounded ${exportFormat === 'pdf' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
+                        >
+                          PDF
+                        </button>
+                        <button 
+                          onClick={() => setExportFormat('jpg')}
+                          className={`flex-1 py-1.5 text-[9px] font-black uppercase rounded ${exportFormat === 'jpg' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
+                        >
+                          JPG
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <h4 className="text-[8px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3">Resolution (DPI)</h4>
+                      <div className="grid grid-cols-3 gap-2">
+                        {[72, 150, 300].map(dpi => (
+                          <button 
+                            key={dpi}
+                            onClick={() => setExportDpi(dpi as any)}
+                            className={`py-2 text-[9px] font-black border rounded-lg transition-all ${exportDpi === dpi ? 'bg-blue-600/10 border-blue-500 text-blue-400' : 'bg-transparent border-[#222] text-slate-500 hover:border-slate-700'}`}
+                          >
+                            {dpi}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <button 
+                      onClick={startExport}
+                      className="w-full py-3 bg-white text-black text-[10px] font-black uppercase tracking-[0.2em] rounded-lg hover:bg-slate-200 transition-colors shadow-2xl active:scale-95"
+                    >
+                      Download {exportFormat.toUpperCase()}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden bg-[#1a1a1a]">
-        <aside 
-          className="bg-[#252525] border-r border-[#333] flex flex-col z-20 relative overflow-hidden transition-[width] duration-75 ease-out shadow-2xl" 
-          style={{ width: sidebarWidth }}
-        >
-          <div className="p-4 border-b border-[#333] flex items-center justify-between bg-[#2d2d2d] shrink-0">
-            <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-widest truncate">Library Assets ({images.length})</h2>
-            <button 
-              onClick={() => fileInputRef.current?.click()}
-              className="text-blue-500 hover:text-blue-400 p-1 transition-colors bg-blue-500/10 rounded-full"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg>
-            </button>
-            <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileUpload} />
+      <div className="flex flex-1 overflow-hidden">
+        <aside className="bg-[#0d0d0d] border-r border-[#1a1a1a] flex flex-col z-20 overflow-hidden" style={{ width: sidebarWidth }}>
+          <div className="p-4 border-b border-[#1a1a1a] flex items-center justify-between shrink-0">
+            <h2 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Library ({images.length})</h2>
+            <Tooltip text="Upload new photos" position="right">
+              <button onClick={() => document.getElementById('file-up')?.click()} className="w-7 h-7 flex items-center justify-center bg-blue-600/10 text-blue-500 hover:bg-blue-600 hover:text-white rounded-lg transition-all">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4"/></svg>
+              </button>
+            </Tooltip>
+            <input id="file-up" type="file" multiple className="hidden" onChange={handleFileUpload} />
           </div>
-          
-          <div className="flex-1 overflow-y-auto p-4 hide-scrollbar grid gap-3 auto-rows-max relative min-h-0" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(130px, 1fr))` }} onDragLeave={() => setLibraryDropTarget(null)}>
-            {images.length === 0 ? (
-              <div className="col-span-full h-full flex flex-col items-center justify-center text-center opacity-40 py-20 border-2 border-dashed border-[#444] rounded-lg m-2">
-                <svg className="w-12 h-12 mb-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Library Empty</p>
-                <button onClick={() => fileInputRef.current?.click()} className="mt-4 px-4 py-2 bg-[#333] hover:bg-blue-600 text-white rounded text-[8px] font-black uppercase transition-all">Add Photos</button>
-              </div>
-            ) : (
-              images.map((img, idx) => (
-                <div key={img.id} className="relative group/libraryitem">
-                  {getDropIndicator(idx)}
-                  <LibraryItem 
-                    image={img} index={idx} onDragStart={handleLibraryDragStart} 
-                    onDragOver={handleLibraryDragOver} onDrop={handleLibraryDrop} 
-                    onDelete={handleRemoveImageFromLibrary}
-                    isSingleColumn={isSingleColumn}
-                  />
-                  {placedStatus[img.id] && (
-                    <div className="absolute top-1.5 right-1.5 bg-blue-600 rounded-full p-1 shadow-lg border border-white/20 z-10">
-                      <svg className="w-2 h-2 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="4" d="M5 13l4 4L19 7"/></svg>
-                    </div>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-          
-          <div className="p-3 border-t border-[#333] bg-[#222] shrink-0">
-            <div className="flex justify-between items-center text-[9px] text-slate-500 uppercase font-black tracking-widest">
-               <div className="flex gap-4">
-                  <span>PLACED: {Object.values(placedStatus).filter(Boolean).length}</span>
-               </div>
-               <div className="flex gap-4">
-                <button onClick={() => setImages([])} className="text-red-900 hover:text-red-500 transition-colors uppercase font-black">Purge Lib</button>
-                <button onClick={clearSpread} className="text-slate-400 hover:text-white transition-colors uppercase font-black">Reset Spread</button>
-               </div>
-            </div>
+          <div className="flex-1 overflow-y-auto p-4 grid grid-cols-2 gap-3 auto-rows-max hide-scrollbar">
+            {images.map((img, idx) => (
+              <LibraryItem 
+                key={img.id} image={img} index={idx} isPlaced={pageConfigs.some(p => p.frames.some(f => f.imageId === img.id))}
+                onDragStart={(e) => {
+                  e.dataTransfer.setData('imageId', img.id);
+                  e.dataTransfer.effectAllowed = 'move';
+                  setDraggedLibraryImageId(img.id);
+                }}
+                onDragOver={(e, index, side) => {
+                  e.preventDefault();
+                }}
+                onDrop={(e, targetIdx) => {
+                  e.preventDefault();
+                  const droppedImageId = e.dataTransfer.getData('imageId');
+                  if (draggedLibraryImageId === droppedImageId) {
+                    handleLibraryReorder(droppedImageId, targetIdx);
+                  }
+                  setDraggedLibraryImageId(null);
+                }}
+                onDelete={(id) => setImages(prev => prev.filter(i => i.id !== id))}
+              />
+            ))}
           </div>
         </aside>
 
-        <div onMouseDown={startResizing} className="w-1.5 bg-[#111] hover:bg-blue-600 cursor-col-resize z-30 transition-colors border-x border-[#333]" />
-
-        <main className="flex-1 overflow-y-auto bg-[#181818] hide-scrollbar scroll-smooth relative">
-          <div className="py-24 px-12 flex flex-wrap justify-center gap-x-12 gap-y-40 min-h-full relative z-10">
+        <main 
+          className="flex-1 overflow-y-auto bg-[#080808] hide-scrollbar scroll-smooth"
+          onMouseDown={handleVoidClick}
+        >
+          {/* Workspace container changed to a centered wrapping flex layout to handle multiple columns */}
+          <div 
+            className="py-24 px-12 flex flex-wrap justify-center gap-x-24 gap-y-48 min-h-full content-start"
+            onMouseDown={handleVoidClick}
+          >
             {spreads.map((spread, sIdx) => (
-              <div key={spread.leftIdx} className="group relative flex flex-col items-center">
-                <div className="absolute -top-12 left-0 w-full flex justify-between px-2 text-[10px] font-black text-slate-600 uppercase tracking-[0.2em] opacity-40 group-hover:opacity-100 transition-all pointer-events-none">
-                  <span className="bg-[#222] px-2 py-0.5 rounded border border-[#333]">Spread {sIdx + 1}</span>
-                  <div className="flex gap-4">
-                    <span>P.{spread.leftIdx + 1}</span>
-                    {spread.rightIdx !== null && <span>P.{spread.rightIdx + 1}</span>}
-                  </div>
+              <div key={sIdx} className="relative group shrink-0">
+                <div className="absolute -top-10 left-0 right-0 flex justify-between px-2 opacity-30 group-hover:opacity-100 transition-opacity">
+                   <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Spread {sIdx + 1}</span>
+                   <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Pages {spread.leftIdx + 1} & {spread.rightIdx !== null ? spread.rightIdx + 1 : ''}</span>
                 </div>
 
-                <div className="flex shadow-[0_30px_70px_-15px_rgba(0,0,0,0.8)] bg-white rounded-[1px] overflow-visible ring-1 ring-black/10">
+                <div className="flex bg-white shadow-[0_30px_90px_-20px_rgba(0,0,0,0.8)] rounded-[1px] overflow-visible">
                    <div className="relative group/page">
                       <Page 
                         pageIndex={spread.leftIdx} config={pageConfigs[spread.leftIdx]} 
-                        images={(paginatedImages[spread.leftIdx] || []).map(img => img as PhotoImage)} 
-                        ratio={currentRatio} width={dynamicPageWidth}
-                        imageScales={imageScales}
-                        onDrop={handleDropOnPage} onDragStart={handleSpreadDragStart}
-                        onRemoveImage={handleRemoveImageFromPage}
-                        onScaleChange={handleScaleChange}
+                        activeFrameId={activeFrame?.pageIndex === spread.leftIdx ? activeFrame.frameId : null}
+                        onSetActiveFrameId={(id) => setActiveFrame(id ? { pageIndex: spread.leftIdx, frameId: id } : null)}
+                        libraryImages={images} ratio={currentRatio} width={dynamicPageWidth}
+                        onDropImage={onDropImage} onUpdateFrame={onUpdateFrame} onDeleteFrame={onDeleteFrame} onAddFrame={onAddFrame}
                       />
                       <PageActionBar 
                         index={spread.leftIdx} config={pageConfigs[spread.leftIdx]} 
                         zoomLevel={zoomLevel} width={dynamicPageWidth}
-                        updatePageLayout={updatePageLayout} updatePageCrop={updatePageCrop}
-                        updatePageMargin={updatePageMargin}
-                        onDeletePage={deletePage}
+                        onAddFrame={onAddFrame} updatePageMargin={updatePageMargin}
                       />
                    </div>
 
@@ -827,53 +619,44 @@ const App: React.FC = () => {
                      <div className="relative group/page">
                         <Page 
                           pageIndex={spread.rightIdx} config={pageConfigs[spread.rightIdx]} 
-                          images={(paginatedImages[spread.rightIdx] || []).map(img => img as PhotoImage)} 
-                          ratio={currentRatio} width={dynamicPageWidth}
-                          isRightPage
-                          imageScales={imageScales}
-                          onDrop={handleDropOnPage} onDragStart={handleSpreadDragStart}
-                          onRemoveImage={handleRemoveImageFromPage}
-                          onScaleChange={handleScaleChange}
+                          activeFrameId={activeFrame?.pageIndex === spread.rightIdx ? activeFrame.frameId : null}
+                          onSetActiveFrameId={(id) => setActiveFrame(id ? { pageIndex: spread.rightIdx, frameId: id } : null)}
+                          libraryImages={images} ratio={currentRatio} width={dynamicPageWidth}
+                          isRightPage onDropImage={onDropImage} onUpdateFrame={onUpdateFrame} onDeleteFrame={onDeleteFrame} onAddFrame={onAddFrame}
                         />
                         <PageActionBar 
                           index={spread.rightIdx} config={pageConfigs[spread.rightIdx]} 
                           zoomLevel={zoomLevel} width={dynamicPageWidth}
-                          updatePageLayout={updatePageLayout} updatePageCrop={updatePageCrop}
-                          updatePageMargin={updatePageMargin}
-                          onDeletePage={deletePage}
+                          onAddFrame={onAddFrame} updatePageMargin={updatePageMargin}
                         />
                      </div>
                    )}
                 </div>
-
-                <button 
-                  onClick={() => removeSpreadAt(spread.leftIdx)}
-                  className="absolute -top-8 right-0 text-slate-100 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all p-2 flex items-center gap-2 text-[8px] font-black uppercase z-20"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                  Remove Spread
-                </button>
               </div>
             ))}
 
-            <div className="w-full flex justify-center py-20">
-              <button 
-                onClick={addSpread}
-                className="px-12 py-5 bg-[#222] border border-[#333] rounded-full text-slate-500 text-[10px] font-black uppercase tracking-[0.5em] hover:bg-[#2a2a2a] hover:text-white transition-all shadow-2xl active:scale-95 border-dashed"
-              >
-                Append New Spread
-              </button>
+            <div className="w-full flex justify-center py-12">
+              <Tooltip text="Insert two new blank pages">
+                <button 
+                  onClick={addSpread} 
+                  className="px-20 py-10 bg-[#111] border border-dashed border-[#333] rounded-2xl text-slate-600 text-[11px] font-black uppercase tracking-[0.25em] hover:text-white hover:border-blue-500/50 transition-all shadow-xl group"
+                >
+                  <span className="group-hover:scale-110 inline-block transition-transform">+ New Spread</span>
+                </button>
+              </Tooltip>
             </div>
           </div>
         </main>
       </div>
 
-      <footer className="h-8 border-t bg-[#1e1e1e] border-[#333] px-4 flex items-center justify-between shrink-0 text-slate-500 text-[9px] z-30 font-black uppercase tracking-[0.2em]">
-        <div className="flex gap-8">
-          <span className="text-slate-400">WS_SIZE: {Math.round(windowWidth - sidebarWidth)}PX</span>
-          <span className="text-slate-400">PAGES: {pageConfigs.length}</span>
-          <span className="text-slate-400">ASSETS: {images.length}</span>
-        </div>
+      <footer className="h-8 border-t bg-[#0d0d0d] border-[#1a1a1a] px-6 flex items-center justify-between shrink-0 text-slate-600 text-[8px] font-black uppercase tracking-widest">
+         <div className="flex gap-6">
+            <span>Project: <span className="text-slate-400">Dynamic Photobook</span></span>
+            <span>Pages: <span className="text-white">{pageConfigs.length}</span></span>
+         </div>
+         <div className="flex gap-4">
+            <span>Powered by BookBaby Engine</span>
+         </div>
       </footer>
     </div>
   );

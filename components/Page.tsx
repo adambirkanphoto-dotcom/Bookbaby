@@ -49,13 +49,11 @@ export const Page: React.FC<PageProps> = ({
 }) => {
   const [draggingFrame, setDraggingFrame] = useState<string | null>(null);
   const [resizingFrame, setResizingFrame] = useState<{ id: string; handle: ResizeHandle } | null>(null);
-  const [panningFrame, setPanningFrame] = useState<string | null>(null);
   const [snapLines, setSnapLines] = useState<{ x?: number[]; y?: number[] }>({});
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, frameId: string } | null>(null);
   
   const containerRef = useRef<HTMLDivElement>(null);
   const dragStartRef = useRef<{ x: number, y: number, initialX: number, initialY: number, initialW: number, initialH: number, initialRatio: number } | null>(null);
-  const panStartRef = useRef<{ x: number, y: number, initialOffsetX: number, initialOffsetY: number } | null>(null);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -108,23 +106,13 @@ export const Page: React.FC<PageProps> = ({
     const frame = config.frames.find(f => f.id === frameId);
     if (!frame) return;
 
-    // To keep the visual ratio V = W_px / H_px:
-    // W_px = pageWidth * (W_% / 100)
-    // H_px = pageHeight * (H_% / 100)
-    // V = (pageWidth * W_%) / (pageHeight * H_%)
-    // V = ratio * (W_% / H_%)
-    // H_% = (W_% * ratio) / V
-    
     let newWidth = frame.width;
     let newHeight = (newWidth * ratio) / targetVisualRatio;
 
-    // If newHeight exceeds the page boundaries, scale down the width instead
     if (frame.y + newHeight > 100) {
       newHeight = 100 - frame.y;
       newWidth = (newHeight * targetVisualRatio) / ratio;
     }
-
-    // Double check width
     if (frame.x + newWidth > 100) {
       newWidth = 100 - frame.x;
       newHeight = (newWidth * ratio) / targetVisualRatio;
@@ -164,8 +152,9 @@ export const Page: React.FC<PageProps> = ({
   }, []);
 
   const startDragging = (e: React.MouseEvent, frame: Frame) => {
-    if (panningFrame || resizingFrame) return;
-    if (e.button === 2) return;
+    if (resizingFrame) return;
+    if (e.button === 2) return; // Prevent normal drag on right click
+    
     e.preventDefault();
     e.stopPropagation();
     setDraggingFrame(frame.id);
@@ -177,7 +166,7 @@ export const Page: React.FC<PageProps> = ({
       initialY: frame.y,
       initialW: frame.width,
       initialH: frame.height,
-      initialRatio: frame.width / frame.height // Store the current percentage-based ratio
+      initialRatio: frame.width / frame.height 
     };
   };
 
@@ -194,20 +183,6 @@ export const Page: React.FC<PageProps> = ({
       initialW: frame.width,
       initialH: frame.height,
       initialRatio: frame.width / frame.height
-    };
-  };
-
-  const startPanning = (e: React.MouseEvent, frame: Frame) => {
-    if (frame.cropType !== 'fill') return;
-    e.preventDefault();
-    e.stopPropagation();
-    setPanningFrame(frame.id);
-    onSetActiveFrameId(frame.id);
-    panStartRef.current = { 
-      x: e.clientX, 
-      y: e.clientY, 
-      initialOffsetX: frame.offset.x, 
-      initialOffsetY: frame.offset.y 
     };
   };
 
@@ -239,14 +214,13 @@ export const Page: React.FC<PageProps> = ({
     const handleMouseMove = (e: MouseEvent) => {
       if (!containerRef.current || !dragStartRef.current) return;
       const rect = containerRef.current.getBoundingClientRect();
-      const dx = ((e.clientX - dragStartRef.current.x) / rect.width) * 100;
-      const dy = ((e.clientY - dragStartRef.current.y) / rect.height) * 100;
 
-      const activeId = draggingFrame || resizingFrame?.id;
-      if (!activeId) return;
-      const targets = getSnapTargetPoints(activeId);
+      if (draggingFrame && dragStartRef.current) {
+        const dx = ((e.clientX - dragStartRef.current.x) / rect.width) * 100;
+        const dy = ((e.clientY - dragStartRef.current.y) / rect.height) * 100;
+        const activeId = draggingFrame;
+        const targets = getSnapTargetPoints(activeId);
 
-      if (draggingFrame) {
         let newX = dragStartRef.current.initialX + dx;
         let newY = dragStartRef.current.initialY + dy;
         const w = dragStartRef.current.initialW;
@@ -255,7 +229,6 @@ export const Page: React.FC<PageProps> = ({
         const snapX = findBestSnap(newX, targets.x);
         const snapRight = findBestSnap(newX + w, targets.x);
         const snapCenterX = findBestSnap(newX + w / 2, targets.x);
-
         const snapY = findBestSnap(newY, targets.y);
         const snapBottom = findBestSnap(newY + h, targets.y);
         const snapCenterY = findBestSnap(newY + h / 2, targets.y);
@@ -278,10 +251,13 @@ export const Page: React.FC<PageProps> = ({
         onUpdateFrame(pageIndex, draggingFrame, { x: newX, y: newY });
       }
 
-      if (resizingFrame) {
+      if (resizingFrame && dragStartRef.current) {
+        const dx = ((e.clientX - dragStartRef.current.x) / rect.width) * 100;
+        const dy = ((e.clientY - dragStartRef.current.y) / rect.height) * 100;
         const frame = config.frames.find(f => f.id === resizingFrame.id);
         if (!frame) return;
 
+        const targets = getSnapTargetPoints(resizingFrame.id);
         let { initialX: x, initialY: y, initialW: w, initialH: h, initialRatio: ar } = dragStartRef.current;
         const { handle } = resizingFrame;
         const activeSnapX: number[] = [];
@@ -299,7 +275,6 @@ export const Page: React.FC<PageProps> = ({
             const snap = findBestSnap(x, targets.x);
             if (snap.isSnapped) { const oldRight = x + w; x = snap.snapped; w = oldRight - x; activeSnapX.push(snap.snapped); }
         }
-
         if (handle.includes('s')) {
             const snap = findBestSnap(y + h, targets.y);
             if (snap.isSnapped) { h = snap.snapped - y; activeSnapY.push(snap.snapped); }
@@ -312,54 +287,69 @@ export const Page: React.FC<PageProps> = ({
            const useWidthAsMaster = handle === 'e' || handle === 'w' || (handle.includes('e') && Math.abs(dx) > Math.abs(dy)) || (handle.includes('w') && Math.abs(dx) > Math.abs(dy));
            
            if (useWidthAsMaster) {
-              const newH = w / ar;
-              if (handle.includes('n')) {
-                 y = (y + h) - newH;
-              }
-              h = newH;
+              h = w / ar;
+              if (handle.includes('n')) y = (dragStartRef.current.initialY + dragStartRef.current.initialH) - h;
            } else {
-              const newW = h * ar;
-              if (handle.includes('w')) {
-                 x = (x + w) - newW;
-              }
-              w = newW;
+              w = h * ar;
+              if (handle.includes('w')) x = (dragStartRef.current.initialX + dragStartRef.current.initialW) - w;
            }
-        }
 
-        if (w < 5) w = 5;
-        if (h < 5) h = 5;
-        if (x < 0) x = 0;
-        if (y < 0) y = 0;
-        if (x + w > 100) w = 100 - x;
-        if (y + h > 100) h = 100 - y;
+           // Robust boundary clamping that preserves aspect ratio
+           // Clamp Left
+           if (x < 0) {
+             const diff = -x;
+             x = 0;
+             w = (dragStartRef.current.initialX + dragStartRef.current.initialW);
+             h = w / ar;
+             if (handle.includes('n')) y = (dragStartRef.current.initialY + dragStartRef.current.initialH) - h;
+           }
+           // Clamp Top
+           if (y < 0) {
+             const diff = -y;
+             y = 0;
+             h = (dragStartRef.current.initialY + dragStartRef.current.initialH);
+             w = h * ar;
+             if (handle.includes('w')) x = (dragStartRef.current.initialX + dragStartRef.current.initialW) - w;
+           }
+           // Clamp Right
+           if (x + w > 100) {
+             w = 100 - x;
+             h = w / ar;
+             if (handle.includes('n')) y = (dragStartRef.current.initialY + dragStartRef.current.initialH) - h;
+           }
+           // Clamp Bottom
+           if (y + h > 100) {
+             h = 100 - y;
+             w = h * ar;
+             if (handle.includes('w')) x = (dragStartRef.current.initialX + dragStartRef.current.initialW) - w;
+           }
+           
+           // Double check for tiny sizes if clamped too far
+           if (w < 5) { w = 5; h = w / ar; }
+           if (h < 5) { h = 5; w = h * ar; }
+
+        } else {
+            if (w < 5) w = 5;
+            if (h < 5) h = 5;
+            if (x < 0) x = 0;
+            if (y < 0) y = 0;
+            if (x + w > 100) w = 100 - x;
+            if (y + h > 100) h = 100 - y;
+        }
 
         setSnapLines({ x: activeSnapX.length ? activeSnapX : undefined, y: activeSnapY.length ? activeSnapY : undefined });
         onUpdateFrame(pageIndex, resizingFrame.id, { x, y, width: w, height: h });
-      }
-
-      if (panningFrame && panStartRef.current) {
-        const pdx = e.clientX - panStartRef.current.x;
-        const pdy = e.clientY - panStartRef.current.y;
-        const sensitivity = 0.2;
-        onUpdateFrame(pageIndex, panningFrame, {
-          offset: {
-            x: Math.max(0, Math.min(100, panStartRef.current.initialOffsetX - (pdx * sensitivity))),
-            y: Math.max(0, Math.min(100, panStartRef.current.initialOffsetY - (pdy * sensitivity)))
-          }
-        });
       }
     };
 
     const handleMouseUp = () => {
       setDraggingFrame(null);
       setResizingFrame(null);
-      setPanningFrame(null);
       setSnapLines({});
       dragStartRef.current = null;
-      panStartRef.current = null;
     };
 
-    if (draggingFrame || panningFrame || resizingFrame) {
+    if (draggingFrame || resizingFrame) {
       window.addEventListener('mousemove', handleMouseMove);
       window.addEventListener('mouseup', handleMouseUp);
     }
@@ -367,10 +357,8 @@ export const Page: React.FC<PageProps> = ({
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [draggingFrame, panningFrame, resizingFrame, pageIndex, onUpdateFrame, config.frames, ratio]);
+  }, [draggingFrame, resizingFrame, pageIndex, onUpdateFrame, config.frames, ratio]);
 
-  const safeRatio = ratio || 1;
-  const height = width / safeRatio;
   const paddingValue = (config.margin / 16) * width;
 
   return (
@@ -381,16 +369,16 @@ export const Page: React.FC<PageProps> = ({
       onDoubleClick={handleDoubleClick}
       onMouseDown={handleBackgroundMouseDown}
       className={`bg-white relative overflow-hidden flex flex-col ${isRightPage ? 'border-l border-slate-300' : ''}`}
-      style={{ width: `${width}px`, height: `${height}px` }}
+      style={{ width: `${width}px`, height: `${width / (ratio || 1)}px` }}
     >
-      {/* Custom Context Menu */}
+      {/* Context Menu */}
       {contextMenu && (
         <div 
           className="fixed z-[100] bg-[#1a1a1a] border border-[#333] rounded-lg shadow-2xl py-1 min-w-[180px] overflow-hidden"
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="px-3 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-widest border-b border-[#333] mb-1">Frame Layer</div>
+          <div className="px-3 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-widest border-b border-[#333] mb-1">Frame Options</div>
           
           <button 
             className="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider hover:bg-slate-800 transition-colors flex items-center gap-2"
@@ -400,7 +388,7 @@ export const Page: React.FC<PageProps> = ({
             }}
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"/></svg>
-            Duplicate Frame
+            Duplicate
           </button>
 
           <button 
@@ -414,7 +402,7 @@ export const Page: React.FC<PageProps> = ({
             {config.frames.find(f => f.id === contextMenu.frameId)?.isLocked ? 'Unlock Aspect Ratio' : 'Lock Aspect Ratio'}
           </button>
 
-          <div className="px-3 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-widest border-y border-[#333] my-1">Set Visual Aspect Ratio</div>
+          <div className="px-3 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-widest border-y border-[#333] my-1">Set Aspect Ratio</div>
           
           {ASPECT_PRESETS.map((p) => (
             <button 
@@ -431,7 +419,7 @@ export const Page: React.FC<PageProps> = ({
             className="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider hover:bg-slate-800 border-t border-[#333] transition-colors"
             onClick={() => handleCustomRatio(contextMenu.frameId)}
           >
-            Custom Ratio...
+            Custom...
           </button>
 
           <div className="h-px bg-[#333] my-1" />
@@ -443,31 +431,18 @@ export const Page: React.FC<PageProps> = ({
               setContextMenu(null);
             }}
           >
-            Delete Frame
+            Delete
           </button>
         </div>
       )}
 
       {/* Snap Guides */}
-      {snapLines.x?.map(x => (
-        <div key={`x-${x}`} className="absolute top-0 bottom-0 w-px bg-blue-500/50 z-[60] pointer-events-none" style={{ left: `${x}%` }} />
+      {snapLines.x?.map(lx => (
+        <div key={`x-${lx}`} className="absolute top-0 bottom-0 w-px bg-blue-500/50 z-[60] pointer-events-none" style={{ left: `${lx}%` }} />
       ))}
-      {snapLines.y?.map(y => (
-        <div key={`y-${y}`} className="absolute left-0 right-0 h-px bg-blue-500/50 z-[60] pointer-events-none" style={{ top: `${y}%` }} />
+      {snapLines.y?.map(ly => (
+        <div key={`y-${ly}`} className="absolute left-0 right-0 h-px bg-blue-500/50 z-[60] pointer-events-none" style={{ top: `${ly}%` }} />
       ))}
-
-      {/* Empty State Call to Action */}
-      {config.frames.length === 0 && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center p-8 pointer-events-none">
-           <div className="w-full h-full border-2 border-dashed border-slate-200 rounded-lg flex flex-col items-center justify-center text-slate-300">
-             <div className="w-12 h-12 mb-3 bg-slate-50 border border-slate-100 rounded-full flex items-center justify-center text-slate-400">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M12 4v16m8-8H4"/></svg>
-             </div>
-             <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Double click to add frame</p>
-             <p className="text-[8px] font-bold uppercase tracking-widest text-slate-300 mt-1">Or drag an image here</p>
-           </div>
-        </div>
-      )}
 
       <div className="absolute inset-0 page-bg-overlay" style={{ padding: `${paddingValue}px` }}>
         <div className="relative w-full h-full">
@@ -505,17 +480,6 @@ export const Page: React.FC<PageProps> = ({
                       {/* Controls Overlay */}
                       <div className="absolute inset-0 bg-black/5 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-2">
                         <div className="flex justify-between items-start">
-                          {frame.cropType === 'fill' && (
-                            <Tooltip text="Hold & Drag to pan photo inside frame">
-                              <button 
-                                onMouseDown={(e) => { e.stopPropagation(); startPanning(e, frame); }}
-                                className="w-7 h-7 bg-white/90 backdrop-blur shadow-lg rounded-full flex items-center justify-center text-slate-800 hover:bg-blue-600 hover:text-white transition-colors"
-                                title="Pan Crop"
-                              >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-3.04l.53-.81a10.723 10.723 0 012.544-2.812M12 11V9a2 2 0 00-2-2H8a2 2 0 00-2-2v2a2 2 0 002 2h2a2 2 0 002-2zM12 11h2a2 2 0 012 2v2a2 2 0 01-2 2h-2m-3.44-3.04a10.723 10.723 0 00-2.544-2.812"/></svg>
-                              </button>
-                            </Tooltip>
-                          )}
                           <div className="flex gap-1">
                             <Tooltip text={`Switch to ${frame.cropType === 'fill' ? 'Fit' : 'Fill'} mode`}>
                               <button 
@@ -527,29 +491,25 @@ export const Page: React.FC<PageProps> = ({
                               </button>
                             </Tooltip>
                             {frame.isLocked && (
-                               <Tooltip text="Aspect ratio is locked (Right-click to change)">
-                                 <div className="w-4 h-4 bg-white/90 backdrop-blur shadow-lg rounded flex items-center justify-center text-slate-800">
-                                    <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" /></svg>
-                                 </div>
-                               </Tooltip>
+                               <div className="w-4 h-4 bg-white/90 backdrop-blur shadow-lg rounded flex items-center justify-center text-slate-800">
+                                  <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" /></svg>
+                               </div>
                             )}
                           </div>
                         </div>
 
                         <div className="flex flex-col gap-1 bg-white/90 backdrop-blur p-2 rounded shadow-lg" onMouseDown={(e) => e.stopPropagation()}>
                           <div className="flex flex-col gap-1.5">
-                            <Tooltip text="Zoom image content">
-                              <div className="flex items-center gap-2">
-                                <svg className="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7"/></svg>
-                                <input 
-                                  type="range" min="1" max="3" step="0.05" 
-                                  value={frame.scale}
-                                  onMouseDown={(e) => e.stopPropagation()}
-                                  onChange={(e) => onUpdateFrame(pageIndex, frame.id, { scale: parseFloat(e.target.value) })}
-                                  className="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-blue-600"
-                                />
-                              </div>
-                            </Tooltip>
+                            <div className="flex items-center gap-2">
+                              <svg className="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7"/></svg>
+                              <input 
+                                type="range" min="1" max="3" step="0.05" 
+                                value={frame.scale}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onChange={(e) => onUpdateFrame(pageIndex, frame.id, { scale: parseFloat(e.target.value) })}
+                                className="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-blue-600"
+                              />
+                            </div>
                           </div>
                         </div>
                       </div>

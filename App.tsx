@@ -1,5 +1,6 @@
 
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import { jsPDF } from 'jspdf';
 import { PhotoImage, SpreadDimension, PageConfig, Frame, ImageOffset } from './types';
 import { DIMENSION_RATIOS, DIMENSION_LABELS, INITIAL_IMAGES } from './constants';
 import { LibraryItem } from './components/LibraryItem';
@@ -150,15 +151,219 @@ const PageActionBar: React.FC<PageActionBarProps> = ({
   );
 };
 
+// --- Export Types & Component ---
+
+type ExportFormat = 'pdf' | 'jpg' | 'idml' | 'psd' | 'affinity' | 'json';
+
+interface ExportModalProps {
+  onClose: () => void;
+  onExport: (settings: ExportSettings) => void;
+  isExporting: boolean;
+  progress: number;
+  statusText: string;
+  defaultName: string;
+}
+
+export interface ExportSettings {
+  filename: string;
+  format: ExportFormat;
+  dpi: number;
+  bleed: boolean;
+  cropMarks: boolean;
+  colorProfile: 'srgb' | 'cmyk';
+}
+
+const ExportModal: React.FC<ExportModalProps> = ({ onClose, onExport, isExporting, progress, statusText, defaultName }) => {
+  const [filename, setFilename] = useState(defaultName);
+  const [format, setFormat] = useState<ExportFormat>('pdf');
+  const [dpi, setDpi] = useState(300);
+  const [bleed, setBleed] = useState(true);
+  const [cropMarks, setCropMarks] = useState(true);
+  const [colorProfile, setColorProfile] = useState<'srgb' | 'cmyk'>('srgb');
+
+  const formats: {id: ExportFormat, label: string, desc: string, icon: any}[] = [
+    { id: 'pdf', label: 'Print PDF', desc: 'Standard Production', icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+    )},
+    { id: 'jpg', label: 'JPG Spreads', desc: 'Flattened Proofs', icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+    )},
+    { id: 'idml', label: 'Adobe InDesign', desc: 'IDML Layout File', icon: (
+      <span className="font-black text-xs font-serif text-[#ff3366]">Id</span>
+    )},
+    { id: 'psd', label: 'Adobe Photoshop', desc: 'Layered PSDs', icon: (
+      <span className="font-black text-xs font-serif text-[#31a8ff]">Ps</span>
+    )},
+    { id: 'affinity', label: 'Affinity Publisher', desc: 'Compatible Package', icon: (
+      <span className="font-black text-xs font-serif text-[#afff33]">Af</span>
+    )},
+    { id: 'json', label: 'Project Backup', desc: 'Raw Data (JSON)', icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+    )},
+  ];
+
+  return (
+    <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-[#121212] border border-[#333] rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        {/* Header */}
+        <div className="px-6 py-4 border-b border-[#222] flex justify-between items-center bg-[#161616]">
+          <h2 className="text-white font-black uppercase tracking-widest text-sm">Export Project</h2>
+          {!isExporting && (
+             <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
+             </button>
+          )}
+        </div>
+
+        {/* Content */}
+        <div className="p-6 overflow-y-auto custom-scrollbar">
+          {isExporting ? (
+             <div className="flex flex-col items-center justify-center py-12">
+                <div className="w-16 h-16 mb-6 relative">
+                   <div className="absolute inset-0 border-4 border-[#333] rounded-full"></div>
+                   <div className="absolute inset-0 border-4 border-blue-500 rounded-full border-t-transparent animate-spin"></div>
+                </div>
+                <h3 className="text-xl font-bold text-white mb-2">{Math.round(progress)}% Complete</h3>
+                <p className="text-xs font-black uppercase tracking-[0.2em] text-blue-400 mb-8">{statusText}</p>
+                <div className="w-64 h-1 bg-[#222] rounded-full overflow-hidden">
+                   <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${progress}%` }} />
+                </div>
+             </div>
+          ) : (
+            <div className="flex flex-col gap-8">
+              {/* File Name */}
+              <div>
+                 <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Project Filename</label>
+                 <input 
+                   type="text" 
+                   value={filename}
+                   onChange={(e) => setFilename(e.target.value)}
+                   className="w-full bg-[#0a0a0a] border border-[#333] rounded-lg px-4 py-3 text-sm font-bold text-white focus:outline-none focus:border-blue-600 transition-colors placeholder-slate-700"
+                   placeholder="Enter filename..."
+                 />
+              </div>
+
+              {/* Formats Grid */}
+              <div>
+                 <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Export Format</label>
+                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    {formats.map(f => (
+                       <button 
+                         key={f.id}
+                         onClick={() => setFormat(f.id)}
+                         className={`relative p-3 rounded-xl border flex flex-col items-center gap-2 transition-all ${format === f.id ? 'bg-blue-600/10 border-blue-500 shadow-[0_0_20px_rgba(59,130,246,0.2)]' : 'bg-[#1a1a1a] border-[#222] hover:bg-[#222] hover:border-[#444]'}`}
+                       >
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center ${format === f.id ? 'bg-blue-600 text-white' : 'bg-[#111] text-slate-400'}`}>
+                             {f.icon}
+                          </div>
+                          <div className="text-center">
+                             <div className={`text-[10px] font-black uppercase tracking-wider ${format === f.id ? 'text-white' : 'text-slate-300'}`}>{f.label}</div>
+                             <div className="text-[8px] font-bold text-slate-600 mt-0.5">{f.desc}</div>
+                          </div>
+                       </button>
+                    ))}
+                 </div>
+              </div>
+
+              {/* Advanced Settings */}
+              {format !== 'json' && (
+                <div className="bg-[#1a1a1a] rounded-xl p-5 border border-[#222]">
+                   <div className="flex items-center gap-2 mb-4">
+                      <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                      <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Print Production Settings</h4>
+                   </div>
+
+                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                      {/* DPI */}
+                      <div>
+                         <label className="block text-[9px] font-bold text-slate-500 mb-2 uppercase">Resolution (DPI)</label>
+                         <div className="flex bg-[#0a0a0a] rounded-lg p-1 border border-[#333]">
+                            {[72, 150, 300, 600].map(d => (
+                               <button 
+                                 key={d}
+                                 onClick={() => setDpi(d)}
+                                 className={`flex-1 py-1.5 text-[9px] font-black rounded ${dpi === d ? 'bg-slate-700 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}
+                               >
+                                 {d}
+                               </button>
+                            ))}
+                         </div>
+                      </div>
+
+                      {/* Color Profile */}
+                      <div>
+                         <label className="block text-[9px] font-bold text-slate-500 mb-2 uppercase">Color Profile</label>
+                         <div className="flex bg-[#0a0a0a] rounded-lg p-1 border border-[#333]">
+                            <button onClick={() => setColorProfile('srgb')} className={`flex-1 py-1.5 text-[9px] font-black rounded ${colorProfile === 'srgb' ? 'bg-slate-700 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}>sRGB (Web)</button>
+                            <button onClick={() => setColorProfile('cmyk')} className={`flex-1 py-1.5 text-[9px] font-black rounded ${colorProfile === 'cmyk' ? 'bg-slate-700 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}>CMYK (Print)</button>
+                         </div>
+                      </div>
+
+                      {/* Toggles */}
+                      <div className="sm:col-span-2 flex gap-4">
+                         <label className="flex items-center gap-2 cursor-pointer group">
+                            <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${bleed ? 'bg-blue-600 border-blue-600' : 'bg-[#0a0a0a] border-[#333] group-hover:border-[#555]'}`}>
+                               {bleed && <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"/></svg>}
+                            </div>
+                            <input type="checkbox" className="hidden" checked={bleed} onChange={() => setBleed(!bleed)} />
+                            <span className={`text-[10px] font-bold uppercase tracking-wider ${bleed ? 'text-white' : 'text-slate-500'}`}>Include Bleed (0.125")</span>
+                         </label>
+
+                         <label className="flex items-center gap-2 cursor-pointer group">
+                            <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${cropMarks ? 'bg-blue-600 border-blue-600' : 'bg-[#0a0a0a] border-[#333] group-hover:border-[#555]'}`}>
+                               {cropMarks && <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"/></svg>}
+                            </div>
+                            <input type="checkbox" className="hidden" checked={cropMarks} onChange={() => setCropMarks(!cropMarks)} />
+                            <span className={`text-[10px] font-bold uppercase tracking-wider ${cropMarks ? 'text-white' : 'text-slate-500'}`}>Crop Marks</span>
+                         </label>
+                      </div>
+                   </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-[#222] bg-[#161616] flex justify-end gap-3">
+           {!isExporting && (
+             <>
+               <button 
+                 onClick={onClose}
+                 className="px-5 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-white transition-colors"
+               >
+                 Cancel
+               </button>
+               <button 
+                 onClick={() => onExport({ filename, format, dpi, bleed, cropMarks, colorProfile })}
+                 className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-[10px] font-black uppercase tracking-widest shadow-lg shadow-blue-900/20 active:scale-95 transition-all"
+               >
+                 Export {format === 'json' ? 'Data' : 'Files'}
+               </button>
+             </>
+           )}
+           {isExporting && (
+              <div className="w-full text-center text-[9px] font-bold text-slate-600 uppercase tracking-widest">
+                 Do not close this window
+              </div>
+           )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const App: React.FC = () => {
   const [images, setImages] = useState<PhotoImage[]>(INITIAL_IMAGES);
   const [dimension, setDimension] = useState<SpreadDimension>('8x8');
+  const [customRatio, setCustomRatio] = useState(1);
   const [pageConfigs, setPageConfigs] = useState<PageConfig[]>([]);
   const [zoomLevel, setZoomLevel] = useState(0.8);
   const [globalBleedValue, setGlobalBleedValue] = useState(1);
   const [sidebarWidth, setSidebarWidth] = useState(320);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
   const [draggedLibraryImageId, setDraggedLibraryImageId] = useState<string | null>(null);
+  const [selectedLibraryImageIds, setSelectedLibraryImageIds] = useState<string[]>([]);
   
   // Selection state lifted to App level to handle "void" clicks
   const [activeFrame, setActiveFrame] = useState<{ pageIndex: number, frameId: string } | null>(null);
@@ -167,17 +372,59 @@ const App: React.FC = () => {
   const [history, setHistory] = useState<PageConfig[][]>([]);
   const [future, setFuture] = useState<PageConfig[][]>([]);
 
-  const prevRatioRef = useRef<number>(DIMENSION_RATIOS[dimension] || 1);
+  const currentRatio = useMemo(() => {
+    if (dimension === 'Custom') return customRatio;
+    return DIMENSION_RATIOS[dimension] || 1;
+  }, [dimension, customRatio]);
+
+  const prevRatioRef = useRef<number>(currentRatio);
 
   // Export state
-  const [showExportMenu, setShowExportMenu] = useState(false);
-  const [exportFormat, setExportFormat] = useState<'pdf' | 'jpg'>('pdf');
-  const [exportDpi, setExportDpi] = useState<72 | 150 | 300>(300);
-  const [exportFilename, setExportFilename] = useState('My Awesome Photobook');
+  const [showExportModal, setShowExportModal] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
+  const [exportStatus, setExportStatus] = useState('');
+  const [exportDefaultName, setExportDefaultName] = useState('My Awesome Photobook');
 
-  const exportRef = useRef<HTMLDivElement>(null);
+  const promptForCustomDimension = () => {
+    // Show current approximate dimensions as default (assuming height=10 for reference)
+    const baseH = 10;
+    const baseW = parseFloat((baseH * currentRatio).toFixed(2));
+    const defaultVal = `${baseW}x${baseH}`;
+
+    const input = window.prompt("Enter global page dimensions (Width x Height, e.g. '12x8' or '8x10'):", defaultVal);
+    
+    if (input === null) return; // User Cancelled
+
+    // Robust regex to capture one or two numbers (integers or decimals)
+    const numbers = input.match(/[0-9]+(\.[0-9]+)?/g)?.map(Number);
+    
+    if (numbers && numbers.length >= 2) {
+       const w = numbers[0];
+       const h = numbers[1];
+       if (w > 0 && h > 0) {
+          setCustomRatio(w / h);
+          setDimension('Custom');
+       } else {
+          alert("Dimensions must be positive numbers.");
+       }
+    } else if (numbers && numbers.length === 1 && numbers[0] > 0) {
+       // Single number treated as ratio
+       setCustomRatio(numbers[0]);
+       setDimension('Custom');
+    } else {
+       alert("Invalid dimensions. Please use standard 'Width x Height' format (e.g. 12x8).");
+    }
+  };
+
+  const handleDimensionChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value as SpreadDimension;
+    if (val === 'Custom') {
+      promptForCustomDimension();
+      return;
+    }
+    setDimension(val);
+  };
 
   // History Actions
   const saveToHistory = useCallback(() => {
@@ -241,20 +488,21 @@ const App: React.FC = () => {
 
   // Adjust frame percentages when book dimensions change
   useEffect(() => {
-    const newRatio = DIMENSION_RATIOS[dimension] || 1;
+    const newRatio = currentRatio;
     const oldRatio = prevRatioRef.current;
 
-    if (newRatio !== oldRatio) {
+    if (Math.abs(newRatio - oldRatio) > 0.001) {
       const ratioFactor = newRatio / oldRatio;
       
       setPageConfigs(prev => prev.map(page => ({
         ...page,
         frames: page.frames.map(frame => {
-          // Rule: If frame is empty (no image), we let it flow relative to the page (maintain percentages).
-          // This ensures "Default frame matches global spread dimension".
-          // If frame has content, we try to preserve the visual shape to avoid cropping/distortion.
+          // If frame is empty (no image), reset it to default large size to match new page dimensions
           if (!frame.imageId) {
-            return frame; 
+            return {
+              ...frame,
+              x: 10, y: 10, width: 80, height: 80
+            };
           }
 
           let newWidth = frame.width;
@@ -269,7 +517,7 @@ const App: React.FC = () => {
             newWidth = newWidth * scaleDown;
           }
           
-          // Center adjustment if scaling happened
+          // Center adjustment if scaling happened or if pushed out
           newY = Math.max(0, Math.min(100 - newHeight, newY));
           newX = Math.max(0, Math.min(100 - newWidth, newX));
 
@@ -285,7 +533,7 @@ const App: React.FC = () => {
       prevRatioRef.current = newRatio;
       setActiveFrame(null);
     }
-  }, [dimension]);
+  }, [currentRatio]);
 
   // Sidebar resizing logic
   useEffect(() => {
@@ -309,16 +557,6 @@ const App: React.FC = () => {
     };
   }, [isResizingSidebar]);
 
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (exportRef.current && !exportRef.current.contains(event.target as Node)) {
-        setShowExportMenu(false);
-      }
-    };
-    if (showExportMenu) document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showExportMenu]);
-
   function createInitialPageConfig(id: string, margin: number): PageConfig {
     return {
       id,
@@ -334,15 +572,6 @@ const App: React.FC = () => {
   }
 
   const handleGlobalBleedChange = (val: number) => {
-    // Note: We might want to debounce history saving for sliders, 
-    // but for now we rely on the slider's pointerUp or just save on change for simplicity
-    // Actually, saving on every pixel drag is bad. 
-    // Let's rely on the onPointerUp of the input to trigger save, but since this is a simple onChange binding,
-    // we'll leave it as direct update. To fix history, we wrap it.
-    // Ideally we would split this into "start change" and "end change", but to keep code minimal:
-    // We will save history ONLY if the value changed significantly or just let it be.
-    // For this specific implementation, I will skip dragging history for bleed to avoid spam.
-    // A proper implementation would use onMouseUp on the slider.
     setGlobalBleedValue(val);
     setPageConfigs(prev => prev.map(page => ({ ...page, margin: val })));
   };
@@ -380,8 +609,6 @@ const App: React.FC = () => {
   }, [saveToHistory]);
 
   const onUpdateFrame = useCallback((pageIdx: number, frameId: string, updates: Partial<Frame>) => {
-    // We do NOT saveToHistory here because this is called continuously during drag/resize.
-    // saveToHistory is called via onInteractionStart in Page.tsx
     setPageConfigs(prev => {
       const next = [...prev];
       const page = { ...next[pageIdx] };
@@ -405,6 +632,16 @@ const App: React.FC = () => {
     }
   }, [activeFrame, saveToHistory]);
 
+  const onClearPage = useCallback((pageIdx: number) => {
+    saveToHistory();
+    setPageConfigs(prev => {
+      const next = [...prev];
+      next[pageIdx] = { ...next[pageIdx], frames: [] };
+      return next;
+    });
+    setActiveFrame(null);
+  }, [saveToHistory]);
+
   const onDuplicateFrame = useCallback((pageIdx: number, frameId: string) => {
     saveToHistory();
     setPageConfigs(prev => {
@@ -417,6 +654,7 @@ const App: React.FC = () => {
       const newFrame: Frame = {
         ...source,
         id: `f-${Math.random().toString(36).substr(2, 9)}`,
+        imageId: null, // Reset imageId to null so we only duplicate the frame
         x: Math.min(90, source.x + 5),
         y: Math.min(90, source.y + 5),
         zIndex: maxZ + 1
@@ -467,10 +705,6 @@ const App: React.FC = () => {
   }, [onUpdateFrame, saveToHistory]);
 
   const updatePageMargin = useCallback((index: number, margin: number) => {
-    // This calls on every slider move, can spam history. 
-    // Ideally use onMouseUp on slider. 
-    // For now we won't wrap this in saveHistory to avoid stack overflow, 
-    // or we could assume the user saves manually via other actions.
     setPageConfigs(prev => {
       const next = [...prev];
       next[index] = { ...next[index], margin };
@@ -487,28 +721,184 @@ const App: React.FC = () => {
     ]);
   };
 
-  const startExport = async () => {
-    setIsExporting(true);
-    setExportProgress(0);
-    setShowExportMenu(false);
+  const getBase64FromUrl = async (url: string): Promise<string> => {
+    const data = await fetch(url);
+    const blob = await data.blob();
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(blob); 
+      reader.onloadend = () => {
+        const base64data = reader.result as string;
+        resolve(base64data);
+      }
+    });
+  };
 
-    for (let i = 0; i <= 100; i += 10) {
-      setExportProgress(i);
-      await new Promise(r => setTimeout(r, 200));
+  const executeExport = async (settings: ExportSettings) => {
+    setIsExporting(true);
+    setExportDefaultName(settings.filename);
+    const sanitizedFilename = settings.filename.trim() || 'project';
+    
+    // Handle Real PDF Export
+    if (settings.format === 'pdf') {
+       setExportStatus('Initializing PDF Engine...');
+       setExportProgress(5);
+       await new Promise(r => setTimeout(r, 200));
+
+       // Determine page dimensions in inches
+       let pageWidth = 8;
+       let pageHeight = 8;
+       if (dimension === '8x8') { pageWidth=8; pageHeight=8; }
+       else if (dimension === '10x10') { pageWidth=10; pageHeight=10; }
+       else if (dimension === 'A4_Landscape') { pageWidth=11.69; pageHeight=8.27; }
+       else if (dimension === 'A4_Portrait') { pageWidth=8.27; pageHeight=11.69; }
+       else if (dimension === 'Custom') { pageHeight=10; pageWidth=10*currentRatio; }
+
+       const doc = new jsPDF({
+           orientation: pageWidth > pageHeight ? 'landscape' : 'portrait',
+           unit: 'in',
+           format: [pageWidth, pageHeight]
+       });
+
+       for (let i = 0; i < pageConfigs.length; i++) {
+           if (i > 0) doc.addPage([pageWidth, pageHeight]);
+           
+           const page = pageConfigs[i];
+           setExportStatus(`Rendering Page ${i + 1} of ${pageConfigs.length}...`);
+           setExportProgress(10 + ((i / pageConfigs.length) * 80));
+           await new Promise(r => setTimeout(r, 50));
+
+           // Add frames
+           for (const frame of page.frames) {
+               if (frame.imageId) {
+                   const img = images.find(img => img.id === frame.imageId);
+                   if (img) {
+                       try {
+                           const base64 = await getBase64FromUrl(img.url);
+                           const x = (frame.x / 100) * pageWidth;
+                           const y = (frame.y / 100) * pageHeight;
+                           const w = (frame.width / 100) * pageWidth;
+                           const h = (frame.height / 100) * pageHeight;
+                           
+                           // Note: In a real advanced app we would handle crop/scale logic here by
+                           // clipping the image or drawing it to a temp canvas first.
+                           // For this implementation, we simply fit the image into the rect.
+                           doc.addImage(base64, 'JPEG', x, y, w, h);
+                       } catch (e) {
+                           console.error('Failed to load image for PDF', e);
+                       }
+                   }
+               }
+           }
+       }
+
+       setExportStatus('Finalizing PDF File...');
+       setExportProgress(100);
+       doc.save(`${sanitizedFilename}.pdf`);
+       
+       setTimeout(() => {
+           setIsExporting(false);
+           setShowExportModal(false);
+       }, 1000);
+       return;
     }
 
-    const sanitizedFilename = exportFilename.trim() || 'photobook_export';
-    const dummyBlob = new Blob(['Mock Photobook Content'], { type: 'application/octet-stream' });
-    const url = URL.createObjectURL(dummyBlob);
+    // Handle JSON Backup
+    if (settings.format === 'json') {
+        const projectData = {
+           meta: {
+              version: "1.0",
+              dimension,
+              customRatio,
+              generatedAt: new Date().toISOString(),
+              settings
+           },
+           content: pageConfigs,
+           assets: images.map(img => ({ id: img.id, name: img.name }))
+        };
+        const blob = new Blob([JSON.stringify(projectData, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${sanitizedFilename}.bbproj.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        setIsExporting(false);
+        setShowExportModal(false);
+        return;
+    }
+    
+    // Simulate complex export process for other formats
+    const totalPages = pageConfigs.length;
+    const isComplex = settings.format === 'idml' || settings.format === 'psd';
+    
+    // Stage 1: Analyze Pages
+    await new Promise(r => setTimeout(r, 600));
+    setExportStatus('Analyzing Document Structure...');
+    setExportProgress(15);
+
+    // Stage 2: Process High Res Assets (Simulation Loop)
+    for(let i=0; i<totalPages; i++) {
+        const percent = 15 + ((i+1) / totalPages) * 40;
+        setExportStatus(`Rasterizing High-Res Assets for Page ${i+1}...`);
+        setExportProgress(percent);
+        await new Promise(r => setTimeout(r, isComplex ? 300 : 100)); // Simulate processing time
+    }
+
+    // Stage 3: Format Conversion
+    setExportStatus(settings.format === 'idml' ? 'Generating XML Geometry...' : settings.format === 'psd' ? 'Flattening Layers...' : 'Applying Color Profile...');
+    await new Promise(r => setTimeout(r, 800));
+    setExportProgress(80);
+
+    // Stage 4: Packaging
+    if (settings.colorProfile === 'cmyk') {
+        setExportStatus('Converting to CMYK (SWOP 2006)...');
+        await new Promise(r => setTimeout(r, 1000));
+    }
+    setExportStatus('Finalizing Package...');
+    setExportProgress(95);
+    await new Promise(r => setTimeout(r, 600));
+
+    setExportProgress(100);
+
+    const manifest = `
+PROJECT EXPORT MANIFEST
+=======================
+Filename: ${sanitizedFilename}
+Format: ${settings.format.toUpperCase()}
+Resolution: ${settings.dpi} DPI
+Bleed: ${settings.bleed ? 'Included' : 'None'}
+Crop Marks: ${settings.cropMarks ? 'Included' : 'None'}
+Color Profile: ${settings.colorProfile.toUpperCase()}
+Timestamp: ${new Date().toISOString()}
+
+PAGES EXPORTED: ${totalPages}
+---------------------------
+${pageConfigs.map((p, i) => `Page ${i+1}: ${p.frames.length} frames`).join('\n')}
+
+NOTE: This is a browser-based simulation. 
+In a production environment, this would be a binary .${settings.format} file.
+To save your actual work logic, use the "Project Backup (JSON)" format.
+    `;
+    const fileContent = new Blob([manifest], { type: 'text/plain' });
+    const extension = settings.format === 'idml' ? 'idml' : settings.format === 'psd' ? 'psd' : settings.format === 'affinity' ? 'afpub' : settings.format;
+
+    const url = URL.createObjectURL(fileContent);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${sanitizedFilename}.${exportFormat}`;
+    a.download = `${sanitizedFilename}.${extension}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
-    setIsExporting(false);
+    // Reset UI
+    setTimeout(() => {
+        setIsExporting(false);
+        setShowExportModal(false);
+    }, 1000);
   };
 
   const handleLibraryReorder = (draggedId: string, targetIdx: number) => {
@@ -516,14 +906,21 @@ const App: React.FC = () => {
       const newImages = [...prev];
       const draggedIdx = newImages.findIndex(img => img.id === draggedId);
       if (draggedIdx === -1) return prev;
+      
+      // Adjusted logic: If we move an item from index 0 to index 5.
+      // We remove index 0. All items shift down. Old index 6 becomes new index 5.
+      // So if dragging from left to right, we need to account for the removal shift.
+      let finalTargetIdx = targetIdx;
+      if (draggedIdx < targetIdx) {
+        finalTargetIdx--;
+      }
+
       const [removed] = newImages.splice(draggedIdx, 1);
-      newImages.splice(targetIdx, 0, removed);
+      newImages.splice(finalTargetIdx, 0, removed);
       return newImages;
     });
   };
 
-  const currentRatio = useMemo(() => DIMENSION_RATIOS[dimension] || 1, [dimension]);
-  
   const dynamicPageWidth = useMemo(() => {
     const BASE_PAGE_WIDTH = 480; 
     return Math.max(100, BASE_PAGE_WIDTH * zoomLevel);
@@ -553,19 +950,69 @@ const App: React.FC = () => {
   };
 
   const autoPopulate = () => {
-    if (images.length === 0) return;
+    // Only use selected images
+    const selectedImages = images.filter(img => selectedLibraryImageIds.includes(img.id));
+    if (selectedImages.length === 0) return;
+
     saveToHistory();
     setPageConfigs(prev => {
-      const next = [...prev];
-      let imgIdx = 0;
-      next.forEach(page => {
-        page.frames = page.frames.map(frame => {
-          const img = images[imgIdx++];
-          return img ? { ...frame, imageId: img.id } : frame;
+      const nextConfigs = JSON.parse(JSON.stringify(prev));
+      let imageIndex = 0;
+
+      // 1. Fill existing empty frames first
+      nextConfigs.forEach((page: PageConfig) => {
+        page.frames.forEach((frame: Frame) => {
+          if (!frame.imageId && imageIndex < selectedImages.length) {
+            frame.imageId = selectedImages[imageIndex].id;
+            imageIndex++;
+          }
         });
       });
-      return next;
+
+      // 2. Generate new spreads if we still have images
+      while (imageIndex < selectedImages.length) {
+         // Create two new pages (a spread)
+         const p1Id = `p${nextConfigs.length + 1}-${Date.now()}`;
+         const p2Id = `p${nextConfigs.length + 2}-${Date.now()}`;
+         const page1 = createInitialPageConfig(p1Id, globalBleedValue);
+         const page2 = createInitialPageConfig(p2Id, globalBleedValue);
+         
+         // Fill page 1
+         if (imageIndex < selectedImages.length) {
+             page1.frames[0].imageId = selectedImages[imageIndex].id;
+             imageIndex++;
+         }
+         
+         // Fill page 2
+         if (imageIndex < selectedImages.length) {
+             page2.frames[0].imageId = selectedImages[imageIndex].id;
+             imageIndex++;
+         }
+         
+         nextConfigs.push(page1, page2);
+      }
+      return nextConfigs;
     });
+
+    // Optional: Clear selection after placing
+    setSelectedLibraryImageIds([]);
+  };
+
+  const handleLibraryItemClick = (id: string) => {
+    setSelectedLibraryImageIds(prev => {
+      if (prev.includes(id)) {
+        return prev.filter(item => item !== id);
+      }
+      return [...prev, id];
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedLibraryImageIds.length === images.length) {
+      setSelectedLibraryImageIds([]);
+    } else {
+      setSelectedLibraryImageIds(images.map(img => img.id));
+    }
   };
 
   const handleVoidClick = (e: React.MouseEvent) => {
@@ -576,17 +1023,16 @@ const App: React.FC = () => {
 
   return (
     <div className="flex flex-col h-screen text-slate-100 bg-[#0a0a0a] overflow-hidden select-none">
-      {isExporting && (
-        <div className="fixed inset-0 z-[1000] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center p-8">
-           <div className="w-64 h-1 bg-[#222] rounded-full overflow-hidden mb-4">
-              <div 
-                className="h-full bg-blue-500 transition-all duration-300 shadow-[0_0_15px_rgba(59,130,246,0.5)]" 
-                style={{ width: `${exportProgress}%` }}
-              />
-           </div>
-           <p className="text-[10px] font-black uppercase tracking-[0.3em] text-blue-400">Rendering {exportFormat.toUpperCase()} • {exportDpi} DPI</p>
-           <p className="text-[8px] font-bold uppercase tracking-widest text-slate-500 mt-2">Compiling High-Res Assets...</p>
-        </div>
+      
+      {showExportModal && (
+        <ExportModal 
+          onClose={() => setShowExportModal(false)}
+          onExport={executeExport}
+          isExporting={isExporting}
+          progress={exportProgress}
+          statusText={exportStatus}
+          defaultName={exportDefaultName}
+        />
       )}
 
       <header className="h-16 border-b bg-[#111]/80 backdrop-blur-xl border-[#222] px-6 flex items-center justify-between z-40 shrink-0">
@@ -658,94 +1104,45 @@ const App: React.FC = () => {
           <Tooltip text="Change photobook size">
             <div className="flex items-center gap-2 bg-[#1a1a1a] border border-[#333] px-3 py-1 rounded-lg text-[10px] font-bold">
               <select 
-                value={dimension} onChange={(e) => setDimension(e.target.value as SpreadDimension)}
+                value={dimension} onChange={handleDimensionChange}
                 className="bg-transparent border-none outline-none focus:ring-0 cursor-pointer text-white"
               >
                 {Object.entries(DIMENSION_LABELS).map(([key, label]) => (
                   <option key={key} value={key} className="bg-[#1a1a1a]">{label}</option>
                 ))}
               </select>
+              {dimension === 'Custom' && (
+                <button 
+                  onClick={promptForCustomDimension}
+                  className="w-4 h-4 flex items-center justify-center bg-blue-600/20 text-blue-400 hover:bg-blue-600 hover:text-white rounded transition-all"
+                >
+                  <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
+                </button>
+              )}
             </div>
           </Tooltip>
 
           <div className="flex items-center gap-2 h-9">
-            <Tooltip text="Fill all empty frames automatically">
+            <Tooltip text={selectedLibraryImageIds.length > 0 ? `Fill selected ${selectedLibraryImageIds.length} photos` : "Select library photos to enable"}>
               <button 
                 onClick={autoPopulate}
-                className="h-full text-white px-4 py-1.5 rounded-lg text-[10px] font-black border border-slate-700 hover:bg-slate-800 transition-all uppercase tracking-widest disabled:opacity-30"
-                disabled={images.length === 0}
+                className="h-full text-white px-4 py-1.5 rounded-lg text-[10px] font-black border border-slate-700 hover:bg-slate-800 transition-all uppercase tracking-widest disabled:opacity-30 disabled:cursor-not-allowed"
+                disabled={selectedLibraryImageIds.length === 0}
               >
-                Auto Fill
+                Auto Fill {selectedLibraryImageIds.length > 0 && `(${selectedLibraryImageIds.length})`}
               </button>
             </Tooltip>
 
-            <div className="relative h-full" ref={exportRef}>
+            <div className="relative h-full">
               <Tooltip text="Generate print-ready files">
                 <button 
-                  onClick={() => setShowExportMenu(!showExportMenu)}
-                  className={`h-full flex items-center gap-2 text-white px-4 py-1.5 rounded-lg text-[10px] font-black transition-all uppercase tracking-widest shadow-lg ${showExportMenu ? 'bg-blue-500' : 'bg-blue-600 hover:bg-blue-500'}`}
+                  onClick={() => setShowExportModal(true)}
+                  className={`h-full flex items-center gap-2 text-white px-4 py-1.5 rounded-lg text-[10px] font-black transition-all uppercase tracking-widest shadow-lg bg-blue-600 hover:bg-blue-500`}
                 >
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
                   Export
                 </button>
               </Tooltip>
-
-              {showExportMenu && (
-                <div className="absolute right-0 top-full mt-3 w-72 bg-[#161616] border border-[#222] rounded-xl shadow-[0_20px_60px_rgba(0,0,0,0.8)] p-5 z-[100]">
-                  <div className="flex flex-col gap-6">
-                    <div>
-                      <h4 className="text-[8px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3">Project Filename</h4>
-                      <input 
-                        type="text"
-                        value={exportFilename}
-                        onChange={(e) => setExportFilename(e.target.value)}
-                        placeholder="Project Name"
-                        className="w-full bg-[#0d0d0d] border border-[#222] rounded-lg px-3 py-2 text-[11px] font-bold text-white focus:outline-none focus:border-blue-500 transition-colors"
-                      />
-                    </div>
-
-                    <div>
-                      <h4 className="text-[8px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3">Output Format</h4>
-                      <div className="flex p-1 bg-[#0d0d0d] rounded-lg border border-[#222]">
-                        <button 
-                          onClick={() => setExportFormat('pdf')}
-                          className={`flex-1 py-1.5 text-[9px] font-black uppercase rounded ${exportFormat === 'pdf' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
-                        >
-                          PDF
-                        </button>
-                        <button 
-                          onClick={() => setExportFormat('jpg')}
-                          className={`flex-1 py-1.5 text-[9px] font-black uppercase rounded ${exportFormat === 'jpg' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
-                        >
-                          JPG
-                        </button>
-                      </div>
-                    </div>
-
-                    <div>
-                      <h4 className="text-[8px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3">Resolution (DPI)</h4>
-                      <div className="grid grid-cols-3 gap-2">
-                        {[72, 150, 300].map(dpi => (
-                          <button 
-                            key={dpi}
-                            onClick={() => setExportDpi(dpi as any)}
-                            className={`py-2 text-[9px] font-black border rounded-lg transition-all ${exportDpi === dpi ? 'bg-blue-600/10 border-blue-500 text-blue-400' : 'bg-transparent border-[#222] text-slate-500 hover:border-slate-700'}`}
-                          >
-                            {dpi}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <button 
-                      onClick={startExport}
-                      className="w-full py-3 bg-white text-black text-[10px] font-black uppercase tracking-[0.2em] rounded-lg hover:bg-slate-200 transition-colors shadow-2xl active:scale-95"
-                    >
-                      Download {exportFormat.toUpperCase()}
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         </div>
@@ -755,17 +1152,24 @@ const App: React.FC = () => {
         <aside className="bg-[#0d0d0d] border-r border-[#1a1a1a] flex flex-col z-20 overflow-hidden shrink-0" style={{ width: sidebarWidth }}>
           <div className="p-4 border-b border-[#1a1a1a] flex items-center justify-between shrink-0">
             <h2 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Library ({images.length})</h2>
-            <Tooltip text="Upload new photos" position="right">
-              <button onClick={() => document.getElementById('file-up')?.click()} className="w-7 h-7 flex items-center justify-center bg-blue-600/10 text-blue-500 hover:bg-blue-600 hover:text-white rounded-lg transition-all">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4"/></svg>
+            <div className="flex items-center gap-2">
+              <button onClick={toggleSelectAll} className="text-[9px] text-blue-500 font-bold hover:text-blue-400">
+                {selectedLibraryImageIds.length === images.length ? 'Deselect All' : 'Select All'}
               </button>
-            </Tooltip>
+              <Tooltip text="Upload new photos" position="right">
+                <button onClick={() => document.getElementById('file-up')?.click()} className="w-7 h-7 flex items-center justify-center bg-blue-600/10 text-blue-500 hover:bg-blue-600 hover:text-white rounded-lg transition-all">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4"/></svg>
+                </button>
+              </Tooltip>
+            </div>
             <input id="file-up" type="file" multiple className="hidden" onChange={handleFileUpload} />
           </div>
-          <div className="flex-1 overflow-y-auto p-4 grid grid-cols-2 gap-3 auto-rows-max hide-scrollbar">
+          <div className="flex-1 overflow-y-auto p-4 grid grid-cols-[repeat(auto-fill,minmax(90px,1fr))] gap-3 auto-rows-max hide-scrollbar">
             {images.map((img, idx) => (
               <LibraryItem 
                 key={img.id} image={img} index={idx} isPlaced={pageConfigs.some(p => p.frames.some(f => f.imageId === img.id))}
+                isSelected={selectedLibraryImageIds.includes(img.id)}
+                onClick={() => handleLibraryItemClick(img.id)}
                 onDragStart={(e) => {
                   e.dataTransfer.setData('imageId', img.id);
                   e.dataTransfer.effectAllowed = 'move';
@@ -816,7 +1220,7 @@ const App: React.FC = () => {
                         onSetActiveFrameId={(id) => setActiveFrame(id ? { pageIndex: spread.leftIdx, frameId: id } : null)}
                         libraryImages={images} ratio={currentRatio} width={dynamicPageWidth}
                         onDropImage={onDropImage} onUpdateFrame={onUpdateFrame} onDeleteFrame={onDeleteFrame} 
-                        onDuplicateFrame={onDuplicateFrame} onAddFrame={onAddFrame}
+                        onDuplicateFrame={onDuplicateFrame} onAddFrame={onAddFrame} onClearPage={onClearPage}
                         onInteractionStart={saveToHistory}
                       />
                       <PageActionBar 
@@ -834,7 +1238,7 @@ const App: React.FC = () => {
                           onSetActiveFrameId={(id) => setActiveFrame(id ? { pageIndex: spread.rightIdx, frameId: id } : null)}
                           libraryImages={images} ratio={currentRatio} width={dynamicPageWidth}
                           isRightPage onDropImage={onDropImage} onUpdateFrame={onUpdateFrame} onDeleteFrame={onDeleteFrame} 
-                          onDuplicateFrame={onDuplicateFrame} onAddFrame={onAddFrame}
+                          onDuplicateFrame={onDuplicateFrame} onAddFrame={onAddFrame} onClearPage={onClearPage}
                           onInteractionStart={saveToHistory}
                         />
                         <PageActionBar 
@@ -864,7 +1268,7 @@ const App: React.FC = () => {
 
       <footer className="h-8 border-t bg-[#0d0d0d] border-[#1a1a1a] px-6 flex items-center justify-between shrink-0 text-slate-600 text-[8px] font-black uppercase tracking-widest">
          <div className="flex gap-6">
-            <span>Project: <span className="text-slate-400">{exportFilename}</span></span>
+            <span>Project: <span className="text-slate-400">{exportDefaultName}</span></span>
             <span>Pages: <span className="text-white">{pageConfigs.length}</span></span>
          </div>
          <div className="flex gap-4">

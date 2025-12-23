@@ -17,6 +17,7 @@ interface PageProps {
   onDeleteFrame: (pageIndex: number, frameId: string) => void;
   onDuplicateFrame: (pageIndex: number, frameId: string) => void;
   onAddFrame: (pageIndex: number, x?: number, y?: number) => void;
+  onClearPage: (pageIndex: number) => void;
   onInteractionStart?: () => void;
 }
 
@@ -47,12 +48,15 @@ export const Page: React.FC<PageProps> = ({
   onDeleteFrame,
   onDuplicateFrame,
   onAddFrame,
+  onClearPage,
   onInteractionStart
 }) => {
   const [draggingFrame, setDraggingFrame] = useState<string | null>(null);
   const [resizingFrame, setResizingFrame] = useState<{ id: string; handle: ResizeHandle } | null>(null);
   const [snapLines, setSnapLines] = useState<{ x?: number[]; y?: number[] }>({});
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, frameId: string } | null>(null);
+  const [pageContextMenu, setPageContextMenu] = useState<{ x: number, y: number } | null>(null);
+  const [customRatioValues, setCustomRatioValues] = useState({ w: 4, h: 3 });
   
   const containerRef = useRef<HTMLDivElement>(null);
   const dragStartRef = useRef<{ x: number, y: number, initialX: number, initialY: number, initialW: number, initialH: number, initialRatio: number } | null>(null);
@@ -83,6 +87,9 @@ export const Page: React.FC<PageProps> = ({
   };
 
   const handleBackgroundMouseDown = (e: React.MouseEvent) => {
+    // Only clear selection if left click
+    if (e.button !== 0) return;
+    
     if (e.target === containerRef.current || (e.target as HTMLElement).classList.contains('page-bg-overlay')) {
       onSetActiveFrameId(null);
     }
@@ -102,6 +109,19 @@ export const Page: React.FC<PageProps> = ({
     e.stopPropagation();
     onSetActiveFrameId(frameId);
     setContextMenu({ x: e.clientX, y: e.clientY, frameId });
+    setPageContextMenu(null);
+  };
+
+  const handlePageContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (draggingFrame || resizingFrame) return;
+
+    // Ensure we are clicking on the page background
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (rect) {
+       setPageContextMenu({ x: e.clientX, y: e.clientY });
+       setContextMenu(null);
+    }
   };
 
   const applyAspectRatio = useCallback((frameId: string, targetVisualRatio: number) => {
@@ -128,29 +148,17 @@ export const Page: React.FC<PageProps> = ({
     setContextMenu(null);
   }, [config.frames, ratio, pageIndex, onUpdateFrame]);
 
-  const handleCustomRatio = (frameId: string) => {
-    const input = window.prompt("Set target visual aspect ratio (e.g. 1.0 for square, 1.5 for 4:6, or 16:9):", "1.5");
-    if (!input) return;
-
-    let ratioVal: number;
-    if (input.includes(':')) {
-      const parts = input.split(':');
-      ratioVal = parseFloat(parts[0]) / parseFloat(parts[1]);
-    } else {
-      ratioVal = parseFloat(input);
-    }
-
-    if (!isNaN(ratioVal) && ratioVal > 0) {
-      applyAspectRatio(frameId, ratioVal);
-    } else {
-      alert("Invalid aspect ratio. Use numbers or common ratios like 16:9.");
-    }
-  };
-
   useEffect(() => {
-    const closeMenu = () => setContextMenu(null);
-    window.addEventListener('click', closeMenu);
-    return () => window.removeEventListener('click', closeMenu);
+    const closeMenu = (e: MouseEvent) => {
+        // Prevent closing if clicking inside the context menu (specifically inputs)
+        const target = e.target as HTMLElement;
+        if (target.closest('.context-menu-prevent-close')) return;
+        
+        setContextMenu(null);
+        setPageContextMenu(null);
+    };
+    window.addEventListener('mousedown', closeMenu);
+    return () => window.removeEventListener('mousedown', closeMenu);
   }, []);
 
   const startDragging = (e: React.MouseEvent, frame: Frame) => {
@@ -376,13 +384,14 @@ export const Page: React.FC<PageProps> = ({
       onDrop={handleBackgroundDrop}
       onDoubleClick={handleDoubleClick}
       onMouseDown={handleBackgroundMouseDown}
+      onContextMenu={handlePageContextMenu}
       className={`bg-white relative overflow-hidden flex flex-col ${isRightPage ? 'border-l border-slate-300' : ''}`}
       style={{ width: `${width}px`, height: `${width / (ratio || 1)}px` }}
     >
-      {/* Context Menu */}
+      {/* Frame Context Menu */}
       {contextMenu && (
         <div 
-          className="fixed z-[100] bg-[#1a1a1a] border border-[#333] rounded-lg shadow-2xl py-1 min-w-[180px] overflow-hidden"
+          className="fixed z-[100] bg-[#1a1a1a] border border-[#333] rounded-lg shadow-2xl py-1 min-w-[180px] overflow-hidden context-menu-prevent-close"
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -396,7 +405,7 @@ export const Page: React.FC<PageProps> = ({
             }}
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"/></svg>
-            Duplicate
+            Duplicate Frame
           </button>
 
           <button 
@@ -423,14 +432,86 @@ export const Page: React.FC<PageProps> = ({
             </button>
           ))}
 
-          <button 
-            className="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider hover:bg-slate-800 border-t border-[#333] transition-colors"
-            onClick={() => handleCustomRatio(contextMenu.frameId)}
-          >
-            Custom...
-          </button>
+          {/* Custom Aspect Ratio Inputs */}
+          <div className="px-4 py-2 border-t border-[#333]">
+             <div className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Custom Ratio</div>
+             <div className="flex items-center gap-1.5">
+               {/* Width Input */}
+               <div className="flex-1 flex bg-[#0d0d0d] border border-[#333] rounded overflow-hidden h-7">
+                  <input 
+                    type="number"
+                    min="0.1" 
+                    step="0.5"
+                    value={customRatioValues.w}
+                    onChange={(e) => {
+                        const val = parseFloat(e.target.value);
+                        if(!isNaN(val)) setCustomRatioValues(prev => ({...prev, w: val}));
+                    }}
+                    className="w-full h-full bg-transparent text-white text-[10px] font-bold text-center outline-none border-none p-0 appearance-none"
+                  />
+                  <div className="flex flex-col border-l border-[#333] shrink-0 w-4">
+                     <button onClick={() => setCustomRatioValues(p => ({...p, w: (Number(p.w)||0) + 0.5}))} className="h-1/2 flex items-center justify-center hover:bg-[#222] text-slate-400 transition-colors">
+                       <svg className="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 15l7-7 7 7"/></svg>
+                     </button>
+                     <button onClick={() => setCustomRatioValues(p => ({...p, w: Math.max(0.1, (Number(p.w)||0) - 0.5)}))} className="h-1/2 flex items-center justify-center hover:bg-[#222] text-slate-400 border-t border-[#333] transition-colors">
+                       <svg className="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M19 9l-7 7-7-7"/></svg>
+                     </button>
+                  </div>
+               </div>
+
+               <span className="text-[10px] text-slate-600 font-bold">:</span>
+
+               {/* Height Input */}
+               <div className="flex-1 flex bg-[#0d0d0d] border border-[#333] rounded overflow-hidden h-7">
+                  <input 
+                    type="number" 
+                    min="0.1"
+                    step="0.5"
+                    value={customRatioValues.h}
+                    onChange={(e) => {
+                        const val = parseFloat(e.target.value);
+                        if(!isNaN(val)) setCustomRatioValues(prev => ({...prev, h: val}));
+                    }}
+                    className="w-full h-full bg-transparent text-white text-[10px] font-bold text-center outline-none border-none p-0 appearance-none"
+                  />
+                  <div className="flex flex-col border-l border-[#333] shrink-0 w-4">
+                     <button onClick={() => setCustomRatioValues(p => ({...p, h: (Number(p.h)||0) + 0.5}))} className="h-1/2 flex items-center justify-center hover:bg-[#222] text-slate-400 transition-colors">
+                        <svg className="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 15l7-7 7 7"/></svg>
+                     </button>
+                     <button onClick={() => setCustomRatioValues(p => ({...p, h: Math.max(0.1, (Number(p.h)||0) - 0.5)}))} className="h-1/2 flex items-center justify-center hover:bg-[#222] text-slate-400 border-t border-[#333] transition-colors">
+                        <svg className="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M19 9l-7 7-7-7"/></svg>
+                     </button>
+                  </div>
+               </div>
+
+               <button 
+                 onClick={() => {
+                    if(customRatioValues.w > 0 && customRatioValues.h > 0) {
+                       applyAspectRatio(contextMenu.frameId, customRatioValues.w / customRatioValues.h);
+                    }
+                 }}
+                 className="w-7 h-7 flex items-center justify-center bg-blue-600 hover:bg-blue-500 text-white rounded shadow-lg ml-1 shrink-0"
+               >
+                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"/></svg>
+               </button>
+             </div>
+          </div>
 
           <div className="h-px bg-[#333] my-1" />
+
+          {/* NEW: Remove Photo Button */}
+          {config.frames.find(f => f.id === contextMenu.frameId)?.imageId && (
+             <button 
+               className="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-300 hover:bg-slate-800 transition-colors flex items-center gap-2"
+               onClick={() => {
+                 onUpdateFrame(pageIndex, contextMenu.frameId, { imageId: null });
+                 setContextMenu(null);
+               }}
+             >
+               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12"/></svg>
+               Remove Photo
+             </button>
+          )}
           
           <button 
             className="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-red-500 hover:bg-red-600 hover:text-white transition-colors"
@@ -439,8 +520,49 @@ export const Page: React.FC<PageProps> = ({
               setContextMenu(null);
             }}
           >
-            Delete
+            Delete Frame
           </button>
+        </div>
+      )}
+
+      {/* Page Context Menu */}
+      {pageContextMenu && (
+        <div 
+          className="fixed z-[100] bg-[#1a1a1a] border border-[#333] rounded-lg shadow-2xl py-1 min-w-[160px] overflow-hidden"
+          style={{ top: pageContextMenu.y, left: pageContextMenu.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="px-3 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-widest border-b border-[#333] mb-1">Page Options</div>
+          
+          <button 
+            className="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider hover:bg-slate-800 transition-colors flex items-center gap-2"
+            onClick={() => {
+                if (containerRef.current) {
+                    const rect = containerRef.current.getBoundingClientRect();
+                    const relX = ((pageContextMenu.x - rect.left) / rect.width) * 100;
+                    const relY = ((pageContextMenu.y - rect.top) / rect.height) * 100;
+                    onAddFrame(pageIndex, relX, relY);
+                } else {
+                    onAddFrame(pageIndex);
+                }
+                setPageContextMenu(null);
+            }}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4"/></svg>
+            Add Frame Here
+          </button>
+           
+           <div className="h-px bg-[#333] my-1" />
+           
+           <button 
+             className="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-red-500 hover:bg-red-600 hover:text-white transition-colors"
+             onClick={() => {
+                 onClearPage(pageIndex);
+                 setPageContextMenu(null);
+             }}
+           >
+             Clear All Frames
+           </button>
         </div>
       )}
 

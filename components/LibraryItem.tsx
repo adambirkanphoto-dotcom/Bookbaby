@@ -7,6 +7,8 @@ interface LibraryItemProps {
   image: PhotoImage;
   index: number;
   isPlaced: boolean;
+  isSelected?: boolean;
+  onClick?: () => void;
   onDragStart: (e: React.DragEvent, index: number) => void;
   onDragOver: (e: React.DragEvent, index: number, side: 'left' | 'right' | 'top' | 'bottom') => void;
   onDrop: (e: React.DragEvent, index: number) => void;
@@ -18,6 +20,8 @@ export const LibraryItem: React.FC<LibraryItemProps> = ({
   image, 
   index, 
   isPlaced,
+  isSelected = false,
+  onClick,
   onDragStart, 
   onDragOver, 
   onDrop,
@@ -26,7 +30,7 @@ export const LibraryItem: React.FC<LibraryItemProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const [dragSide, setDragSide] = useState<'left' | 'right' | 'top' | 'bottom' | null>(null);
+  const [dragSide, setDragSide] = useState<'left' | 'right' | null>(null);
 
   const handleDragStart = (e: React.DragEvent) => {
     setIsDragging(true);
@@ -43,23 +47,20 @@ export const LibraryItem: React.FC<LibraryItemProps> = ({
     if (!containerRef.current) return;
 
     const rect = containerRef.current.getBoundingClientRect();
-    let side: 'left' | 'right' | 'top' | 'bottom';
-    
-    if (isSingleColumn) {
-      const y = e.clientY - rect.top;
-      side = y < rect.height / 2 ? 'top' : 'bottom';
-    } else {
-      const x = e.clientX - rect.left;
-      side = x < rect.width / 2 ? 'left' : 'right';
-    }
+    const midpoint = rect.left + rect.width / 2;
+    const side = e.clientX < midpoint ? 'left' : 'right';
     
     setDragSide(side);
-    onDragOver(e, index, side);
+    onDragOver(e, index, side as any); 
   };
 
   const handleDrop = (e: React.DragEvent) => {
+    let targetIndex = index;
+    if (dragSide === 'right') {
+        targetIndex = index + 1;
+    }
     setDragSide(null);
-    onDrop(e, index);
+    onDrop(e, targetIndex);
   };
 
   const handleDragLeave = () => {
@@ -70,22 +71,19 @@ export const LibraryItem: React.FC<LibraryItemProps> = ({
     <div
       ref={containerRef}
       draggable
+      onClick={onClick}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      className={`group relative aspect-square bg-[#1a1a1a] rounded-lg overflow-hidden cursor-grab active:cursor-grabbing transition-all duration-200 border border-[#333] hover:border-blue-500/50 hover:shadow-[0_0_15px_rgba(59,130,246,0.2)] ${isDragging ? 'scale-90 opacity-40' : 'scale-100'}`}
+      className={`group relative aspect-square bg-[#1a1a1a] rounded-lg overflow-hidden cursor-grab active:cursor-grabbing transition-all duration-200 border ${isSelected ? 'border-blue-500 ring-2 ring-blue-500/30' : 'border-[#333] hover:border-blue-500/50'} hover:shadow-[0_0_15px_rgba(59,130,246,0.2)] ${isDragging ? 'scale-75 opacity-70' : 'scale-100'}`}
     >
-      {dragSide && (
-        <div 
-          className={`absolute z-30 bg-blue-500 transition-all pointer-events-none ${
-            dragSide === 'left' ? 'left-0 top-0 bottom-0 w-1' :
-            dragSide === 'right' ? 'right-0 top-0 bottom-0 w-1' :
-            dragSide === 'top' ? 'top-0 left-0 right-0 h-1' :
-            'bottom-0 left-0 right-0 h-1'
-          }`} 
-        />
+      {dragSide === 'left' && (
+        <div className="absolute left-0 top-0 bottom-0 w-1 bg-blue-500 z-50 rounded-full shadow-[0_0_8px_#3b82f6]" />
+      )}
+      {dragSide === 'right' && (
+        <div className="absolute right-0 top-0 bottom-0 w-1 bg-blue-500 z-50 rounded-full shadow-[0_0_8px_#3b82f6]" />
       )}
 
       <img 
@@ -95,14 +93,11 @@ export const LibraryItem: React.FC<LibraryItemProps> = ({
       />
       
       <div className="absolute top-2 left-2 bg-black/60 backdrop-blur-md text-white text-[9px] font-bold px-1.5 py-0.5 rounded border border-white/10 opacity-60 group-hover:opacity-100 transition-opacity">
-        {index + 1}
+          {index + 1}
       </div>
 
       {isPlaced && (
         <div className="absolute inset-0 flex items-center justify-center bg-blue-600/10 pointer-events-none">
-          <div className="bg-blue-600 text-white p-1 rounded-full shadow-lg border-2 border-white/20 scale-100 transition-transform">
-             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="4" d="M5 13l4 4L19 7"/></svg>
-          </div>
           <div className="absolute bottom-2 left-0 right-0 text-center">
             <span className="text-[8px] font-black uppercase text-blue-400 bg-black/60 px-2 py-0.5 rounded-full">Used</span>
           </div>

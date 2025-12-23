@@ -157,15 +157,19 @@ const App: React.FC = () => {
   const [zoomLevel, setZoomLevel] = useState(0.8);
   const [globalBleedValue, setGlobalBleedValue] = useState(1);
   const [sidebarWidth, setSidebarWidth] = useState(320);
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
   const [draggedLibraryImageId, setDraggedLibraryImageId] = useState<string | null>(null);
   
   // Selection state lifted to App level to handle "void" clicks
   const [activeFrame, setActiveFrame] = useState<{ pageIndex: number, frameId: string } | null>(null);
 
+  const prevRatioRef = useRef<number>(DIMENSION_RATIOS[dimension] || 1);
+
   // Export state
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [exportFormat, setExportFormat] = useState<'pdf' | 'jpg'>('pdf');
   const [exportDpi, setExportDpi] = useState<72 | 150 | 300>(300);
+  const [exportFilename, setExportFilename] = useState('My Awesome Photobook');
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
 
@@ -179,6 +183,69 @@ const App: React.FC = () => {
       ]);
     }
   }, [pageConfigs.length, globalBleedValue]);
+
+  // Adjust frame percentages when book dimensions change to preserve visual size/aspect ratio
+  useEffect(() => {
+    const newRatio = DIMENSION_RATIOS[dimension] || 1;
+    const oldRatio = prevRatioRef.current;
+
+    if (newRatio !== oldRatio) {
+      const ratioFactor = newRatio / oldRatio;
+      
+      setPageConfigs(prev => prev.map(page => ({
+        ...page,
+        frames: page.frames.map(frame => {
+          let newWidth = frame.width;
+          let newHeight = frame.height * ratioFactor;
+          let newX = frame.x;
+          let newY = frame.y * ratioFactor;
+
+          // If frame height now overflows the page, scale both dimensions down to fit while keeping aspect
+          if (newHeight > 100) {
+            const scaleDown = 100 / newHeight;
+            newHeight = 100;
+            newWidth = newWidth * scaleDown;
+          }
+          
+          // Center adjustment if scaling happened
+          newY = Math.max(0, Math.min(100 - newHeight, newY));
+          newX = Math.max(0, Math.min(100 - newWidth, newX));
+
+          return {
+            ...frame,
+            width: newWidth,
+            height: newHeight,
+            x: newX,
+            y: newY
+          };
+        })
+      })));
+      prevRatioRef.current = newRatio;
+      setActiveFrame(null);
+    }
+  }, [dimension]);
+
+  // Sidebar resizing logic
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizingSidebar) return;
+      const newWidth = Math.max(200, Math.min(600, e.clientX));
+      setSidebarWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizingSidebar(false);
+    };
+
+    if (isResizingSidebar) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    }
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizingSidebar]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -234,7 +301,6 @@ const App: React.FC = () => {
       page.frames = [...page.frames, newFrame];
       next[pageIdx] = page;
 
-      // Automatically select new frame
       setActiveFrame({ pageIndex: pageIdx, frameId: newFrame.id });
       
       return next;
@@ -259,11 +325,33 @@ const App: React.FC = () => {
       next[pageIdx] = page;
       return next;
     });
-    // Clear selection if deleted
     if (activeFrame?.frameId === frameId) {
       setActiveFrame(null);
     }
   }, [activeFrame]);
+
+  const onDuplicateFrame = useCallback((pageIdx: number, frameId: string) => {
+    setPageConfigs(prev => {
+      const next = [...prev];
+      const page = { ...next[pageIdx] };
+      const source = page.frames.find(f => f.id === frameId);
+      if (!source) return prev;
+
+      const maxZ = Math.max(...page.frames.map(f => f.zIndex));
+      const newFrame: Frame = {
+        ...source,
+        id: `f-${Math.random().toString(36).substr(2, 9)}`,
+        x: Math.min(90, source.x + 5),
+        y: Math.min(90, source.y + 5),
+        zIndex: maxZ + 1
+      };
+
+      page.frames = [...page.frames, newFrame];
+      next[pageIdx] = page;
+      setActiveFrame({ pageIndex: pageIdx, frameId: newFrame.id });
+      return next;
+    });
+  }, []);
 
   const onDropImage = useCallback((pageIdx: number, frameId: string | null, imageId: string, x?: number, y?: number) => {
     if (frameId) {
@@ -322,18 +410,17 @@ const App: React.FC = () => {
     setExportProgress(0);
     setShowExportMenu(false);
 
-    // Simulate multi-page rendering process
     for (let i = 0; i <= 100; i += 10) {
       setExportProgress(i);
       await new Promise(r => setTimeout(r, 200));
     }
 
-    // Trigger mock download
+    const sanitizedFilename = exportFilename.trim() || 'photobook_export';
     const dummyBlob = new Blob(['Mock Photobook Content'], { type: 'application/octet-stream' });
     const url = URL.createObjectURL(dummyBlob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `photobook_export_${exportDpi}dpi.${exportFormat}`;
+    a.download = `${sanitizedFilename}.${exportFormat}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -355,7 +442,6 @@ const App: React.FC = () => {
 
   const currentRatio = useMemo(() => DIMENSION_RATIOS[dimension] || 1, [dimension]);
   
-  // Use a fixed reference width for scaling so that zooming out allows multiple columns
   const dynamicPageWidth = useMemo(() => {
     const BASE_PAGE_WIDTH = 480; 
     return Math.max(100, BASE_PAGE_WIDTH * zoomLevel);
@@ -399,7 +485,6 @@ const App: React.FC = () => {
     });
   };
 
-  // Void Click Handler
   const handleVoidClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) {
       setActiveFrame(null);
@@ -497,8 +582,19 @@ const App: React.FC = () => {
               </Tooltip>
 
               {showExportMenu && (
-                <div className="absolute right-0 top-full mt-3 w-64 bg-[#161616] border border-[#222] rounded-xl shadow-[0_20px_60px_rgba(0,0,0,0.8)] p-5 z-[100]">
+                <div className="absolute right-0 top-full mt-3 w-72 bg-[#161616] border border-[#222] rounded-xl shadow-[0_20px_60px_rgba(0,0,0,0.8)] p-5 z-[100]">
                   <div className="flex flex-col gap-6">
+                    <div>
+                      <h4 className="text-[8px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3">Project Filename</h4>
+                      <input 
+                        type="text"
+                        value={exportFilename}
+                        onChange={(e) => setExportFilename(e.target.value)}
+                        placeholder="Project Name"
+                        className="w-full bg-[#0d0d0d] border border-[#222] rounded-lg px-3 py-2 text-[11px] font-bold text-white focus:outline-none focus:border-blue-500 transition-colors"
+                      />
+                    </div>
+
                     <div>
                       <h4 className="text-[8px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3">Output Format</h4>
                       <div className="flex p-1 bg-[#0d0d0d] rounded-lg border border-[#222]">
@@ -546,8 +642,8 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden">
-        <aside className="bg-[#0d0d0d] border-r border-[#1a1a1a] flex flex-col z-20 overflow-hidden" style={{ width: sidebarWidth }}>
+      <div className="flex flex-1 overflow-hidden relative">
+        <aside className="bg-[#0d0d0d] border-r border-[#1a1a1a] flex flex-col z-20 overflow-hidden shrink-0" style={{ width: sidebarWidth }}>
           <div className="p-4 border-b border-[#1a1a1a] flex items-center justify-between shrink-0">
             <h2 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Library ({images.length})</h2>
             <Tooltip text="Upload new photos" position="right">
@@ -583,11 +679,15 @@ const App: React.FC = () => {
           </div>
         </aside>
 
+        <div 
+          className="w-1.5 h-full cursor-col-resize hover:bg-blue-600/50 transition-colors z-[35] shrink-0 bg-transparent"
+          onMouseDown={() => setIsResizingSidebar(true)}
+        />
+
         <main 
           className="flex-1 overflow-y-auto bg-[#080808] hide-scrollbar scroll-smooth"
           onMouseDown={handleVoidClick}
         >
-          {/* Workspace container changed to a centered wrapping flex layout to handle multiple columns */}
           <div 
             className="py-24 px-12 flex flex-wrap justify-center gap-x-24 gap-y-48 min-h-full content-start"
             onMouseDown={handleVoidClick}
@@ -606,7 +706,8 @@ const App: React.FC = () => {
                         activeFrameId={activeFrame?.pageIndex === spread.leftIdx ? activeFrame.frameId : null}
                         onSetActiveFrameId={(id) => setActiveFrame(id ? { pageIndex: spread.leftIdx, frameId: id } : null)}
                         libraryImages={images} ratio={currentRatio} width={dynamicPageWidth}
-                        onDropImage={onDropImage} onUpdateFrame={onUpdateFrame} onDeleteFrame={onDeleteFrame} onAddFrame={onAddFrame}
+                        onDropImage={onDropImage} onUpdateFrame={onUpdateFrame} onDeleteFrame={onDeleteFrame} 
+                        onDuplicateFrame={onDuplicateFrame} onAddFrame={onAddFrame}
                       />
                       <PageActionBar 
                         index={spread.leftIdx} config={pageConfigs[spread.leftIdx]} 
@@ -622,7 +723,8 @@ const App: React.FC = () => {
                           activeFrameId={activeFrame?.pageIndex === spread.rightIdx ? activeFrame.frameId : null}
                           onSetActiveFrameId={(id) => setActiveFrame(id ? { pageIndex: spread.rightIdx, frameId: id } : null)}
                           libraryImages={images} ratio={currentRatio} width={dynamicPageWidth}
-                          isRightPage onDropImage={onDropImage} onUpdateFrame={onUpdateFrame} onDeleteFrame={onDeleteFrame} onAddFrame={onAddFrame}
+                          isRightPage onDropImage={onDropImage} onUpdateFrame={onUpdateFrame} onDeleteFrame={onDeleteFrame} 
+                          onDuplicateFrame={onDuplicateFrame} onAddFrame={onAddFrame}
                         />
                         <PageActionBar 
                           index={spread.rightIdx} config={pageConfigs[spread.rightIdx]} 
@@ -651,7 +753,7 @@ const App: React.FC = () => {
 
       <footer className="h-8 border-t bg-[#0d0d0d] border-[#1a1a1a] px-6 flex items-center justify-between shrink-0 text-slate-600 text-[8px] font-black uppercase tracking-widest">
          <div className="flex gap-6">
-            <span>Project: <span className="text-slate-400">Dynamic Photobook</span></span>
+            <span>Project: <span className="text-slate-400">{exportFilename}</span></span>
             <span>Pages: <span className="text-white">{pageConfigs.length}</span></span>
          </div>
          <div className="flex gap-4">

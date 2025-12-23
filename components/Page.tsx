@@ -15,6 +15,7 @@ interface PageProps {
   onDropImage: (pageIndex: number, frameId: string | null, imageId: string, x?: number, y?: number) => void;
   onUpdateFrame: (pageIndex: number, frameId: string, updates: Partial<Frame>) => void;
   onDeleteFrame: (pageIndex: number, frameId: string) => void;
+  onDuplicateFrame: (pageIndex: number, frameId: string) => void;
   onAddFrame: (pageIndex: number, x?: number, y?: number) => void;
 }
 
@@ -43,6 +44,7 @@ export const Page: React.FC<PageProps> = ({
   onDropImage,
   onUpdateFrame,
   onDeleteFrame,
+  onDuplicateFrame,
   onAddFrame
 }) => {
   const [draggingFrame, setDraggingFrame] = useState<string | null>(null);
@@ -81,7 +83,6 @@ export const Page: React.FC<PageProps> = ({
   };
 
   const handleBackgroundMouseDown = (e: React.MouseEvent) => {
-    // If clicking background, clear selection
     if (e.target === containerRef.current || (e.target as HTMLElement).classList.contains('page-bg-overlay')) {
       onSetActiveFrameId(null);
     }
@@ -103,23 +104,30 @@ export const Page: React.FC<PageProps> = ({
     setContextMenu({ x: e.clientX, y: e.clientY, frameId });
   };
 
-  const applyAspectRatio = (frameId: string, targetRatio: number) => {
+  const applyAspectRatio = useCallback((frameId: string, targetVisualRatio: number) => {
     const frame = config.frames.find(f => f.id === frameId);
     if (!frame) return;
 
+    // To keep the visual ratio V = W_px / H_px:
+    // W_px = pageWidth * (W_% / 100)
+    // H_px = pageHeight * (H_% / 100)
+    // V = (pageWidth * W_%) / (pageHeight * H_%)
+    // V = ratio * (W_% / H_%)
+    // H_% = (W_% * ratio) / V
+    
     let newWidth = frame.width;
-    let newHeight = newWidth / targetRatio;
+    let newHeight = (newWidth * ratio) / targetVisualRatio;
 
-    // If it exceeds the page height, shrink width instead
+    // If newHeight exceeds the page boundaries, scale down the width instead
     if (frame.y + newHeight > 100) {
       newHeight = 100 - frame.y;
-      newWidth = newHeight * targetRatio;
+      newWidth = (newHeight * targetVisualRatio) / ratio;
     }
 
-    // Double check width doesn't exceed page
+    // Double check width
     if (frame.x + newWidth > 100) {
       newWidth = 100 - frame.x;
-      newHeight = newWidth / targetRatio;
+      newHeight = (newWidth * ratio) / targetVisualRatio;
     }
 
     onUpdateFrame(pageIndex, frameId, { 
@@ -128,10 +136,10 @@ export const Page: React.FC<PageProps> = ({
       isLocked: true 
     });
     setContextMenu(null);
-  };
+  }, [config.frames, ratio, pageIndex, onUpdateFrame]);
 
   const handleCustomRatio = (frameId: string) => {
-    const input = window.prompt("Enter target aspect ratio (e.g. 1.5, 1.77, or 16:9):", "16:9");
+    const input = window.prompt("Set target visual aspect ratio (e.g. 1.0 for square, 1.5 for 4:6, or 16:9):", "1.5");
     if (!input) return;
 
     let ratioVal: number;
@@ -145,7 +153,7 @@ export const Page: React.FC<PageProps> = ({
     if (!isNaN(ratioVal) && ratioVal > 0) {
       applyAspectRatio(frameId, ratioVal);
     } else {
-      alert("Invalid ratio entered.");
+      alert("Invalid aspect ratio. Use numbers or common ratios like 16:9.");
     }
   };
 
@@ -169,7 +177,7 @@ export const Page: React.FC<PageProps> = ({
       initialY: frame.y,
       initialW: frame.width,
       initialH: frame.height,
-      initialRatio: frame.width / frame.height
+      initialRatio: frame.width / frame.height // Store the current percentage-based ratio
     };
   };
 
@@ -359,7 +367,7 @@ export const Page: React.FC<PageProps> = ({
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [draggingFrame, panningFrame, resizingFrame, pageIndex, onUpdateFrame, config.frames]);
+  }, [draggingFrame, panningFrame, resizingFrame, pageIndex, onUpdateFrame, config.frames, ratio]);
 
   const safeRatio = ratio || 1;
   const height = width / safeRatio;
@@ -382,8 +390,19 @@ export const Page: React.FC<PageProps> = ({
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="px-3 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-widest border-b border-[#333] mb-1">Frame Options</div>
+          <div className="px-3 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-widest border-b border-[#333] mb-1">Frame Layer</div>
           
+          <button 
+            className="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider hover:bg-slate-800 transition-colors flex items-center gap-2"
+            onClick={() => {
+              onDuplicateFrame(pageIndex, contextMenu.frameId);
+              setContextMenu(null);
+            }}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"/></svg>
+            Duplicate Frame
+          </button>
+
           <button 
             className="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider hover:bg-blue-600 transition-colors"
             onClick={() => {
@@ -392,10 +411,10 @@ export const Page: React.FC<PageProps> = ({
               setContextMenu(null);
             }}
           >
-            {config.frames.find(f => f.id === contextMenu.frameId)?.isLocked ? 'Unlock Dimensions' : 'Lock Dimensions'}
+            {config.frames.find(f => f.id === contextMenu.frameId)?.isLocked ? 'Unlock Aspect Ratio' : 'Lock Aspect Ratio'}
           </button>
 
-          <div className="px-3 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-widest border-y border-[#333] my-1">Set Aspect Ratio</div>
+          <div className="px-3 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-widest border-y border-[#333] my-1">Set Visual Aspect Ratio</div>
           
           {ASPECT_PRESETS.map((p) => (
             <button 
@@ -508,7 +527,7 @@ export const Page: React.FC<PageProps> = ({
                               </button>
                             </Tooltip>
                             {frame.isLocked && (
-                               <Tooltip text="Aspect ratio is currently locked (Right-click to unlock)">
+                               <Tooltip text="Aspect ratio is locked (Right-click to change)">
                                  <div className="w-4 h-4 bg-white/90 backdrop-blur shadow-lg rounded flex items-center justify-center text-slate-800">
                                     <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" /></svg>
                                  </div>

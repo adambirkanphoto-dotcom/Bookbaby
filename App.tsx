@@ -8,6 +8,7 @@ import { Page } from './components/Page';
 import { Tooltip } from './components/Tooltip';
 
 // --- Custom Dimension Modal ---
+// ... (No changes to CustomDimensionModal, keep as is but I need to include it in the file content for context)
 interface CustomDimensionModalProps {
   onClose: () => void;
   onApply: (width: number, height: number) => void;
@@ -15,7 +16,6 @@ interface CustomDimensionModalProps {
 }
 
 const CustomDimensionModal: React.FC<CustomDimensionModalProps> = ({ onClose, onApply, currentRatio }) => {
-  // Default to a 10" height base, calculating width from current ratio
   const [width, setWidth] = useState<number>(() => parseFloat((10 * currentRatio).toFixed(2)));
   const [height, setHeight] = useState<number>(10);
 
@@ -80,11 +80,12 @@ interface PageActionBarProps {
   index: number;
   config: PageConfig;
   zoomLevel: number;
-  width: number;
-  onAddFrame: (index: number) => void;
+  width?: number;
+  onAddFrame: (pageIndex: number, x?: number, y?: number) => void;
   updatePageMargin: (index: number, margin: number) => void;
 }
 
+// ... (Keep PageActionBar as is)
 const PageActionBar: React.FC<PageActionBarProps> = ({ 
   index, 
   config, 
@@ -149,8 +150,6 @@ const PageActionBar: React.FC<PageActionBarProps> = ({
   );
 };
 
-// ... ExportModal ... (No changes here, skipping for brevity but assuming it exists)
-
 // --- Export Types & Component ---
 
 type ExportFormat = 'pdf' | 'jpg' | 'idml' | 'psd' | 'affinity' | 'json';
@@ -171,6 +170,7 @@ export interface ExportSettings {
   bleed: boolean;
   cropMarks: boolean;
   colorProfile: 'srgb' | 'cmyk';
+  scope: 'spreads' | 'pages';
 }
 
 const ExportModal: React.FC<ExportModalProps> = ({ onClose, onExport, isExporting, progress, statusText, defaultName }) => {
@@ -180,6 +180,7 @@ const ExportModal: React.FC<ExportModalProps> = ({ onClose, onExport, isExportin
   const [bleed, setBleed] = useState(true);
   const [cropMarks, setCropMarks] = useState(true);
   const [colorProfile, setColorProfile] = useState<'srgb' | 'cmyk'>('srgb');
+  const [scope, setScope] = useState<'spreads' | 'pages'>('spreads');
 
   const formats: {id: ExportFormat, label: string, desc: string, icon: any}[] = [
     { id: 'pdf', label: 'Print PDF', desc: 'Standard Production', icon: (
@@ -238,6 +239,25 @@ const ExportModal: React.FC<ExportModalProps> = ({ onClose, onExport, isExportin
                    placeholder="Enter filename..."
                  />
               </div>
+              
+              <div>
+                 <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Export Scope</label>
+                 <div className="flex bg-[#0a0a0a] rounded-lg p-1 border border-[#333]">
+                    <button 
+                        onClick={() => setScope('spreads')} 
+                        className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded transition-colors ${scope === 'spreads' ? 'bg-slate-700 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}
+                    >
+                        Spreads (2 Pages)
+                    </button>
+                    <button 
+                        onClick={() => setScope('pages')} 
+                        className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded transition-colors ${scope === 'pages' ? 'bg-slate-700 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}
+                    >
+                        Single Pages
+                    </button>
+                 </div>
+              </div>
+
               <div>
                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Export Format</label>
                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
@@ -318,7 +338,7 @@ const ExportModal: React.FC<ExportModalProps> = ({ onClose, onExport, isExportin
                  Cancel
                </button>
                <button 
-                 onClick={() => onExport({ filename, format, dpi, bleed, cropMarks, colorProfile })}
+                 onClick={() => onExport({ filename, format, dpi, bleed, cropMarks, colorProfile, scope })}
                  className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-[10px] font-black uppercase tracking-widest shadow-lg shadow-blue-900/20 active:scale-95 transition-all"
                >
                  Export {format === 'json' ? 'Data' : 'Files'}
@@ -345,10 +365,12 @@ const App: React.FC = () => {
   const [globalBleedValue, setGlobalBleedValue] = useState(1);
   const [sidebarWidth, setSidebarWidth] = useState(320);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [draggedLibraryImageId, setDraggedLibraryImageId] = useState<string | null>(null);
   const [selectedLibraryImageIds, setSelectedLibraryImageIds] = useState<string[]>([]);
   const [showDimensionModal, setShowDimensionModal] = useState(false);
   const [activeFrame, setActiveFrame] = useState<{ pageIndex: number, frameId: string } | null>(null);
+  const [activeMenuPageIndex, setActiveMenuPageIndex] = useState<number | null>(null);
   const [history, setHistory] = useState<PageConfig[][]>([]);
   const [future, setFuture] = useState<PageConfig[][]>([]);
   const [showExportModal, setShowExportModal] = useState(false);
@@ -459,14 +481,10 @@ const App: React.FC = () => {
   }, [currentRatio]);
 
   const createInitialPageConfig = useCallback((id: string, margin: number): PageConfig => {
-    // Default to a sane size inside margins
     let w = 60; 
     let h = w * currentRatio; 
     if (h > 80) { h = 80; w = h / currentRatio; }
     
-    // Attempt to respect margins if possible
-    // margin=16 corresponds to 100%, so margin=1 is ~6.25%
-    // If margin is present, let's try to fit nicely
     return {
       id, margin,
       frames: [{
@@ -519,19 +537,11 @@ const App: React.FC = () => {
       const marginPctX = (page.margin / 16) * 100;
       const marginPctY = marginPctX * currentRatio;
       
-      // Default new frames to fit roughly within safe area if no coords provided
       const w = 30;
       const h = w * currentRatio;
       
       let finalX = x !== undefined ? x - (w / 2) : (100 - w) / 2;
       let finalY = y !== undefined ? y - (h / 2) : (100 - h) / 2;
-
-      // If added via button (no x/y), respect margins slightly if possible
-      if (x === undefined && y === undefined && page.margin > 0) {
-         // Center in safe area
-         // Safe area width = 100 - 2*marginPctX
-         // But simple centering is usually fine.
-      }
 
       const newFrame: Frame = {
         id: `f-${Math.random().toString(36).substr(2, 9)}`,
@@ -649,7 +659,7 @@ const App: React.FC = () => {
     saveToHistory();
     const image = images.find(i => i.id === imageId);
     if (frameId) {
-      const updates: Partial<Frame> = { imageId, isLocked: true }; // Force lock on drop
+      const updates: Partial<Frame> = { imageId, isLocked: true }; 
       onUpdateFrame(pageIdx, frameId, updates);
       setActiveFrame({ pageIndex: pageIdx, frameId });
     } else {
@@ -733,69 +743,73 @@ const App: React.FC = () => {
        else if (dimension === 'A4_Portrait') { singlePageWidth=8.27; singlePageHeight=11.69; }
        else if (dimension === 'Custom') { singlePageHeight=10; singlePageWidth=10*currentRatio; }
 
-       const spreadWidth = singlePageWidth * 2;
-       const spreadHeight = singlePageHeight;
+       const isSpreads = settings.scope === 'spreads';
+       const docWidth = isSpreads ? singlePageWidth * 2 : singlePageWidth;
+       const docHeight = singlePageHeight;
 
        const doc = new jsPDF({
-           orientation: spreadWidth > spreadHeight ? 'landscape' : 'portrait',
+           orientation: docWidth > docHeight ? 'landscape' : 'portrait',
            unit: 'in',
-           format: [spreadWidth, spreadHeight]
+           format: [docWidth, docHeight]
        });
 
-       for (let i = 0; i < pageConfigs.length; i += 2) {
-           if (i > 0) doc.addPage([spreadWidth, spreadHeight]);
-           
-           // Render Left Page
-           const leftPage = pageConfigs[i];
-           setExportStatus(`Rendering Spread ${Math.floor(i / 2) + 1} (Left Page)...`);
-           setExportProgress(10 + ((i / pageConfigs.length) * 80));
-           await new Promise(r => setTimeout(r, 50));
-
-           for (const frame of leftPage.frames) {
-               if (frame.imageId) {
-                   const img = images.find(img => img.id === frame.imageId);
-                   if (img) {
-                       try {
-                           const base64 = await getBase64FromUrl(img.url);
-                           const x = (frame.x / 100) * singlePageWidth;
-                           const y = (frame.y / 100) * singlePageHeight;
-                           const w = (frame.width / 100) * singlePageWidth;
-                           const h = (frame.height / 100) * singlePageHeight;
-                           
-                           doc.addImage(base64, 'JPEG', x, y, w, h);
-                       } catch (e) {
-                           console.error('Failed to load image for PDF', e);
-                       }
+       const processFrame = async (frame: Frame, pageOffset: number) => {
+           if (frame.imageId) {
+               const img = images.find(img => img.id === frame.imageId);
+               if (img) {
+                   try {
+                       const base64 = await getBase64FromUrl(img.url);
+                       const x = pageOffset + ((frame.x / 100) * singlePageWidth);
+                       const y = (frame.y / 100) * singlePageHeight;
+                       const w = (frame.width / 100) * singlePageWidth;
+                       const h = (frame.height / 100) * singlePageHeight;
+                       
+                       doc.addImage(base64, 'JPEG', x, y, w, h);
+                   } catch (e) {
+                       console.error('Failed to load image for PDF', e);
                    }
                }
            }
+       };
 
-           // Render Right Page (if exists)
-           if (i + 1 < pageConfigs.length) {
-               const rightPage = pageConfigs[i + 1];
-               setExportStatus(`Rendering Spread ${Math.floor(i / 2) + 1} (Right Page)...`);
+       if (isSpreads) {
+           for (let i = 0; i < pageConfigs.length; i += 2) {
+               if (i > 0) doc.addPage([docWidth, docHeight]);
+               
+               const leftPage = pageConfigs[i];
+               setExportStatus(`Rendering Spread ${Math.floor(i / 2) + 1} (Left Page)...`);
+               setExportProgress(10 + ((i / pageConfigs.length) * 80));
                await new Promise(r => setTimeout(r, 50));
 
-               for (const frame of rightPage.frames) {
-                   if (frame.imageId) {
-                       const img = images.find(img => img.id === frame.imageId);
-                       if (img) {
-                           try {
-                               const base64 = await getBase64FromUrl(img.url);
-                               const x = singlePageWidth + ((frame.x / 100) * singlePageWidth);
-                               const y = (frame.y / 100) * singlePageHeight;
-                               const w = (frame.width / 100) * singlePageWidth;
-                               const h = (frame.height / 100) * singlePageHeight;
-                               
-                               doc.addImage(base64, 'JPEG', x, y, w, h);
-                           } catch (e) {
-                               console.error('Failed to load image for PDF', e);
-                           }
-                       }
+               for (const frame of leftPage.frames) {
+                   await processFrame(frame, 0); 
+               }
+
+               if (i + 1 < pageConfigs.length) {
+                   const rightPage = pageConfigs[i + 1];
+                   setExportStatus(`Rendering Spread ${Math.floor(i / 2) + 1} (Right Page)...`);
+                   await new Promise(r => setTimeout(r, 50));
+
+                   for (const frame of rightPage.frames) {
+                        await processFrame(frame, singlePageWidth); 
                    }
+               }
+           }
+       } else {
+           for (let i = 0; i < pageConfigs.length; i++) {
+               if (i > 0) doc.addPage([docWidth, docHeight]);
+               
+               const page = pageConfigs[i];
+               setExportStatus(`Rendering Page ${i + 1}...`);
+               setExportProgress(10 + ((i / pageConfigs.length) * 80));
+               await new Promise(r => setTimeout(r, 50));
+
+               for (const frame of page.frames) {
+                   await processFrame(frame, 0); 
                }
            }
        }
+
        setExportStatus('Finalizing PDF File...');
        setExportProgress(100);
        doc.save(`${sanitizedFilename}.pdf`);
@@ -806,7 +820,6 @@ const App: React.FC = () => {
        return;
     }
 
-    // Handle JSON Backup
     if (settings.format === 'json') {
         const projectData = {
            meta: {
@@ -833,7 +846,6 @@ const App: React.FC = () => {
         return;
     }
     
-    // Simulate other exports
     const totalPages = pageConfigs.length;
     const isComplex = settings.format === 'idml' || settings.format === 'psd';
     await new Promise(r => setTimeout(r, 600));
@@ -860,7 +872,7 @@ const App: React.FC = () => {
     await new Promise(r => setTimeout(r, 600));
     setExportProgress(100);
 
-    const manifest = `PROJECT EXPORT MANIFEST\nFilename: ${sanitizedFilename}\nFormat: ${settings.format.toUpperCase()}\nResolution: ${settings.dpi} DPI\nTimestamp: ${new Date().toISOString()}\nPages: ${totalPages}`;
+    const manifest = `PROJECT EXPORT MANIFEST\nFilename: ${sanitizedFilename}\nFormat: ${settings.format.toUpperCase()}\nScope: ${settings.scope.toUpperCase()}\nResolution: ${settings.dpi} DPI\nTimestamp: ${new Date().toISOString()}\nPages: ${totalPages}`;
     const fileContent = new Blob([manifest], { type: 'text/plain' });
     const extension = settings.format === 'idml' ? 'idml' : settings.format === 'psd' ? 'psd' : settings.format === 'affinity' ? 'afpub' : settings.format;
     const url = URL.createObjectURL(fileContent);
@@ -1135,53 +1147,89 @@ const App: React.FC = () => {
       </header>
 
       <div className="flex flex-1 overflow-hidden relative">
-        <aside className="bg-[#0d0d0d] border-r border-[#1a1a1a] flex flex-col z-20 overflow-hidden shrink-0" style={{ width: sidebarWidth }}>
-          <div className="p-4 border-b border-[#1a1a1a] flex items-center justify-between shrink-0">
-            <h2 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Library ({images.length})</h2>
-            <div className="flex items-center gap-2">
-              <button onClick={toggleSelectAll} className="text-[9px] text-blue-500 font-bold hover:text-blue-400">
-                {selectedLibraryImageIds.length === images.length ? 'Deselect All' : 'Select All'}
-              </button>
-              <Tooltip text="Upload new photos" position="right">
-                <button onClick={() => document.getElementById('file-up')?.click()} className="w-7 h-7 flex items-center justify-center bg-blue-600/10 text-blue-500 hover:bg-blue-600 hover:text-white rounded-lg transition-all">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4"/></svg>
+        <aside 
+            className="bg-[#0d0d0d] border-r border-[#1a1a1a] flex flex-col z-20 overflow-hidden shrink-0 transition-all duration-300" 
+            style={{ width: isSidebarCollapsed ? 60 : sidebarWidth }}
+        >
+          <div className={`p-4 border-b border-[#1a1a1a] flex items-center shrink-0 h-14 ${isSidebarCollapsed ? 'justify-center flex-col gap-2' : 'justify-between'}`}>
+            {!isSidebarCollapsed && (
+                <>
+                <h2 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Library ({images.length})</h2>
+                <div className="flex items-center gap-2">
+                    <button onClick={toggleSelectAll} className="text-[9px] text-blue-500 font-bold hover:text-blue-400">
+                        {selectedLibraryImageIds.length === images.length ? 'None' : 'All'}
+                    </button>
+                    <Tooltip text="Upload new photos" position="right">
+                        <button onClick={() => document.getElementById('file-up')?.click()} className="w-7 h-7 flex items-center justify-center bg-blue-600/10 text-blue-500 hover:bg-blue-600 hover:text-white rounded-lg transition-all">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4"/></svg>
+                        </button>
+                    </Tooltip>
+                    <button onClick={() => setIsSidebarCollapsed(true)} className="w-7 h-7 flex items-center justify-center text-slate-500 hover:text-white transition-colors">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"/></svg>
+                    </button>
+                </div>
+                </>
+            )}
+            {isSidebarCollapsed && (
+                <button onClick={() => setIsSidebarCollapsed(false)} className="w-8 h-8 flex items-center justify-center text-slate-500 hover:text-white hover:bg-[#222] rounded-lg transition-colors">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/></svg>
                 </button>
-              </Tooltip>
-            </div>
+            )}
             <input id="file-up" type="file" multiple className="hidden" onChange={handleFileUpload} />
           </div>
-          <div className="flex-1 overflow-y-auto p-4 grid grid-cols-[repeat(auto-fill,minmax(90px,1fr))] gap-3 auto-rows-max hide-scrollbar">
-            {images.map((img, idx) => (
-              <LibraryItem 
-                key={img.id} image={img} index={idx} isPlaced={pageConfigs.some(p => p.frames.some(f => f.imageId === img.id))}
-                isSelected={selectedLibraryImageIds.includes(img.id)}
-                onClick={() => handleLibraryItemClick(img.id)}
-                onDragStart={(e) => {
-                  e.dataTransfer.setData('imageId', img.id);
-                  e.dataTransfer.effectAllowed = 'move';
-                  setDraggedLibraryImageId(img.id);
-                }}
-                onDragOver={(e, index, side) => {
-                  e.preventDefault();
-                }}
-                onDrop={(e, targetIdx) => {
-                  e.preventDefault();
-                  const droppedImageId = e.dataTransfer.getData('imageId');
-                  if (draggedLibraryImageId === droppedImageId) {
-                    handleLibraryReorder(droppedImageId, targetIdx);
-                  }
-                  setDraggedLibraryImageId(null);
-                }}
-                onDelete={(id) => setImages(prev => prev.filter(i => i.id !== id))}
-              />
-            ))}
-          </div>
+          
+          {isSidebarCollapsed ? (
+             <div className="flex-1 flex flex-col items-center py-6 gap-6">
+                <div className="text-[9px] font-black text-slate-600 uppercase tracking-widest vertical-text" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>
+                    Library Content
+                </div>
+                <div className="w-8 h-px bg-[#333]"></div>
+                <div className="flex flex-col items-center gap-1">
+                    <span className="text-xl font-black text-white">{images.length}</span>
+                    <span className="text-[7px] font-bold text-slate-500 uppercase">Items</span>
+                </div>
+                <Tooltip text="Upload" position="right">
+                    <button onClick={() => document.getElementById('file-up')?.click()} className="w-8 h-8 flex items-center justify-center bg-blue-600/10 text-blue-500 hover:bg-blue-600 hover:text-white rounded-lg transition-all mt-4">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4"/></svg>
+                    </button>
+                </Tooltip>
+             </div>
+          ) : (
+            <div className="flex-1 overflow-y-auto p-4 grid grid-cols-[repeat(auto-fill,minmax(90px,1fr))] gap-3 auto-rows-max hide-scrollbar">
+                {images.map((img, idx) => (
+                <LibraryItem 
+                    key={img.id} image={img} index={idx} isPlaced={pageConfigs.some(p => p.frames.some(f => f.imageId === img.id))}
+                    isSelected={selectedLibraryImageIds.includes(img.id)}
+                    onClick={() => handleLibraryItemClick(img.id)}
+                    onDragStart={(e) => {
+                    e.dataTransfer.setData('imageId', img.id);
+                    e.dataTransfer.effectAllowed = 'move';
+                    setDraggedLibraryImageId(img.id);
+                    }}
+                    onDragOver={(e, index, side) => {
+                    e.preventDefault();
+                    }}
+                    onDrop={(e, targetIdx) => {
+                    e.preventDefault();
+                    const droppedImageId = e.dataTransfer.getData('imageId');
+                    if (draggedLibraryImageId === droppedImageId) {
+                        handleLibraryReorder(droppedImageId, targetIdx);
+                    }
+                    setDraggedLibraryImageId(null);
+                    }}
+                    onDelete={(id) => setImages(prev => prev.filter(i => i.id !== id))}
+                />
+                ))}
+            </div>
+          )}
         </aside>
 
-        <div 
-          className="w-1.5 h-full cursor-col-resize hover:bg-blue-600/50 transition-colors z-[35] shrink-0 bg-transparent"
-          onMouseDown={() => setIsResizingSidebar(true)}
-        />
+        {!isSidebarCollapsed && (
+            <div 
+            className="w-1.5 h-full cursor-col-resize hover:bg-blue-600/50 transition-colors z-[35] shrink-0 bg-transparent"
+            onMouseDown={() => setIsResizingSidebar(true)}
+            />
+        )}
 
         <main 
           className="flex-1 overflow-y-auto bg-[#080808] hide-scrollbar scroll-smooth"
@@ -1196,6 +1244,10 @@ const App: React.FC = () => {
               const rightFrames = spread.rightIdx !== null ? pageConfigs[spread.rightIdx].frames : [];
               const leftFrames = pageConfigs[spread.leftIdx].frames;
               
+              // Boost Z-index if context menu is active on this page
+              const leftZIndex = activeMenuPageIndex === spread.leftIdx ? 100 : (leftPageHasSpread ? 20 : 1);
+              const rightZIndex = activeMenuPageIndex === spread.rightIdx ? 100 : 1;
+
               return (
                 <div key={sIdx} className="relative group shrink-0">
                   <div className="absolute -top-10 left-0 right-0 flex justify-between px-2 opacity-30 group-hover:opacity-100 transition-opacity">
@@ -1204,7 +1256,7 @@ const App: React.FC = () => {
                   </div>
 
                   <div className="flex bg-white shadow-[0_30px_90px_-20px_rgba(0,0,0,0.8)] rounded-[1px] overflow-visible">
-                     <div className="relative group/page" style={{ zIndex: leftPageHasSpread ? 20 : 1 }}>
+                     <div className="relative group/page" style={{ zIndex: leftZIndex }}>
                         <Page 
                           pageIndex={spread.leftIdx} config={pageConfigs[spread.leftIdx]} 
                           activeFrameId={activeFrame?.pageIndex === spread.leftIdx ? activeFrame.frameId : null}
@@ -1215,6 +1267,7 @@ const App: React.FC = () => {
                           onInteractionStart={saveToHistory}
                           onToggleSpread={onToggleSpread}
                           neighborFrames={rightFrames}
+                          onContextMenuOpen={(isOpen) => setActiveMenuPageIndex(isOpen ? spread.leftIdx : null)}
                         />
                         <PageActionBar 
                           index={spread.leftIdx} config={pageConfigs[spread.leftIdx]} 
@@ -1224,7 +1277,7 @@ const App: React.FC = () => {
                      </div>
 
                      {spread.rightIdx !== null && (
-                       <div className="relative group/page" style={{ zIndex: 1 }}>
+                       <div className="relative group/page" style={{ zIndex: rightZIndex }}>
                           <Page 
                             pageIndex={spread.rightIdx} config={pageConfigs[spread.rightIdx]} 
                             activeFrameId={activeFrame?.pageIndex === spread.rightIdx ? activeFrame.frameId : null}
@@ -1235,6 +1288,7 @@ const App: React.FC = () => {
                             onInteractionStart={saveToHistory}
                             onToggleSpread={onToggleSpread}
                             neighborFrames={leftFrames}
+                            onContextMenuOpen={(isOpen) => setActiveMenuPageIndex(isOpen ? spread.rightIdx : null)}
                           />
                           <PageActionBar 
                             index={spread.rightIdx} config={pageConfigs[spread.rightIdx]} 

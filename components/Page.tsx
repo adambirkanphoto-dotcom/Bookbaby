@@ -35,10 +35,9 @@ interface PageProps {
 }
 
 type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
-type SnapType = 'center' | 'edge' | 'spine';
+type SnapType = 'center' | 'edge' | 'spine' | 'margin';
 
-const SNAP_THRESHOLD = 1.25; // Tighter threshold for precision
-const FIXED_SNAP_POINTS = [0, 50, 100]; // Page edges and center
+const SNAP_THRESHOLD = 1.25; 
 
 export const Page: React.FC<PageProps> = ({ 
   pageIndex, 
@@ -49,7 +48,7 @@ export const Page: React.FC<PageProps> = ({
   ratio, 
   width = 450, 
   isRightPage, 
-  onDropImage,
+  onDropImage, 
   onUpdateFrame,
   onDeleteFrame,
   onDuplicateFrame,
@@ -62,7 +61,6 @@ export const Page: React.FC<PageProps> = ({
   const [draggingFrame, setDraggingFrame] = useState<string | null>(null);
   const [resizingFrame, setResizingFrame] = useState<{ id: string; handle: ResizeHandle } | null>(null);
   
-  // Enhanced Snap State
   const [activeGuides, setActiveGuides] = useState<{ x: { pos: number, type: SnapType }[], y: { pos: number, type: SnapType }[] }>({ x: [], y: [] });
   
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, frameId: string } | null>(null);
@@ -72,8 +70,14 @@ export const Page: React.FC<PageProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const dragStartRef = useRef<{ x: number, y: number, initialX: number, initialY: number, initialW: number, initialH: number, initialRatio: number } | null>(null);
   
-  // Cache snap targets on drag start to improve performance
+  // Cache snap targets on drag start
   const cachedSnapTargets = useRef<{ x: number[], y: number[] }>({ x: [], y: [] });
+
+  // Calculate Margin Percentages based on config.margin (approx inches) relative to width
+  // Assuming config.margin=16 maps to 100% width is a baseline from previous logic, but here we adjust.
+  // We use the same formula as before for visual consistency: (config.margin / 16) * 100
+  const marginPctX = (config.margin / 16) * 100;
+  const marginPctY = marginPctX * ratio;
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -102,13 +106,15 @@ export const Page: React.FC<PageProps> = ({
 
   const handleBackgroundMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return;
-    if (e.target === containerRef.current || (e.target as HTMLElement).classList.contains('page-bg-overlay')) {
+    // Click on background deselects
+    if (e.target === containerRef.current || (e.target as HTMLElement).classList.contains('margin-overlay')) {
       onSetActiveFrameId(null);
     }
   };
 
   const handleDoubleClick = (e: React.MouseEvent) => {
-    if (e.target === containerRef.current || (e.target as HTMLElement).classList.contains('page-bg-overlay')) {
+    // Only trigger if clicking the page background or margin overlay
+    if (e.target === containerRef.current || (e.target as HTMLElement).classList.contains('margin-overlay')) {
         const rect = containerRef.current!.getBoundingClientRect();
         const x = ((e.clientX - rect.left) / rect.width) * 100;
         const y = ((e.clientY - rect.top) / rect.height) * 100;
@@ -141,21 +147,9 @@ export const Page: React.FC<PageProps> = ({
     let newWidth = frame.width;
     let newHeight = (newWidth * ratio) / targetVisualRatio;
 
-    if (isRightPage) {
-        if (frame.y + newHeight > 100) {
-          newHeight = 100 - frame.y;
-          newWidth = (newHeight * targetVisualRatio) / ratio;
-        }
-        if (frame.x + newWidth > 100) {
-          newWidth = 100 - frame.x;
-          newHeight = (newWidth * ratio) / targetVisualRatio;
-        }
-    } else {
-        if (frame.y + newHeight > 100) {
-          newHeight = 100 - frame.y;
-          newWidth = (newHeight * targetVisualRatio) / ratio;
-        }
-    }
+    // Boundary check (keep top-left anchored usually, or center if out of bounds)
+    // We allow full bleed, so just ensure it doesn't disappear completely
+    if (newHeight > 200) newHeight = 100; // Sanity check
 
     onUpdateFrame(pageIndex, frameId, { 
       width: newWidth, 
@@ -163,7 +157,7 @@ export const Page: React.FC<PageProps> = ({
       isLocked: true 
     });
     setContextMenu(null);
-  }, [config.frames, ratio, pageIndex, onUpdateFrame, isRightPage]);
+  }, [config.frames, ratio, pageIndex, onUpdateFrame]);
 
   useEffect(() => {
     const closeMenu = (e: MouseEvent) => {
@@ -179,10 +173,35 @@ export const Page: React.FC<PageProps> = ({
   // --- Snapping Logic ---
 
   const calculateSnapTargets = (activeId: string) => {
-    const xPoints = new Set(FIXED_SNAP_POINTS);
-    const yPoints = new Set(FIXED_SNAP_POINTS);
+    // Basic Page Snaps
+    const xPoints = new Set([0, 50, 100]);
+    const yPoints = new Set([0, 50, 100]);
 
-    // Current page frames
+    // Margin Snaps (Safe Area)
+    if (config.margin > 0) {
+      xPoints.add(marginPctX);
+      xPoints.add(100 - marginPctX);
+      yPoints.add(marginPctY);
+      yPoints.add(100 - marginPctY);
+    }
+
+    // Spread/Neighbor Page Snaps
+    // If we are Left Page, Neighbor is Right Page (starts at 100, ends at 200)
+    // If we are Right Page, Neighbor is Left Page (starts at -100, ends at 0)
+    const neighborOffset = isRightPage ? -100 : 100;
+    
+    // Neighbor Edges
+    xPoints.add(neighborOffset); // 100 or -100 (Spine) - already covered by 0/100 usually, but neighbor outer edge is distinct
+    xPoints.add(neighborOffset + 100); // 200 or 0 (Outer Edge)
+    xPoints.add(neighborOffset + 50); // 150 or -50 (Center)
+
+    // Neighbor Margins
+    if (config.margin > 0) {
+      xPoints.add(neighborOffset + marginPctX);
+      xPoints.add(neighborOffset + (100 - marginPctX));
+    }
+
+    // Other Frames on this page
     config.frames.forEach(f => {
       if (f.id === activeId) return;
       xPoints.add(f.x);
@@ -193,26 +212,21 @@ export const Page: React.FC<PageProps> = ({
       yPoints.add(f.y + f.height / 2);
     });
 
-    // Neighbor frames (offset logic for spreads)
-    // Left Page items see Right page items at +100 offset
-    // Right Page items see Left page items at -100 offset
-    const offset = isRightPage ? -100 : 100;
+    // Neighbor Frames
     neighborFrames.forEach(f => {
-       xPoints.add(f.x + offset);
-       xPoints.add(f.x + f.width + offset);
-       // Add neighbor center too
-       xPoints.add(f.x + f.width / 2 + offset);
+       xPoints.add(f.x + neighborOffset);
+       xPoints.add(f.x + f.width + neighborOffset);
+       xPoints.add(f.x + f.width / 2 + neighborOffset);
     });
 
     return { x: Array.from(xPoints), y: Array.from(yPoints) };
   };
 
   const getSnappedPosition = (current: number, width: number, targets: number[]) => {
-    // Check Left, Center, Right edges
     const edges = [
-      { val: current, offset: 0 },         // Left Edge
-      { val: current + width / 2, offset: width / 2 }, // Center
-      { val: current + width, offset: width } // Right Edge
+      { val: current, offset: 0 },
+      { val: current + width / 2, offset: width / 2 },
+      { val: current + width, offset: width }
     ];
 
     let bestSnap = current;
@@ -228,11 +242,18 @@ export const Page: React.FC<PageProps> = ({
           bestSnap = target - edge.offset;
           guidePos = target;
           
-          // Determine snap type for visuals
-          if (target === 100 && !isRightPage) snapType = 'spine';
-          else if (target === 0 && isRightPage) snapType = 'spine';
-          else if (target === 50 || edge.offset === width / 2) snapType = 'center';
-          else snapType = 'edge';
+          if (target === 0 || target === 100 || target === 200 || target === -100) {
+             // Spine or Page Edge
+             if ((target === 100 && !isRightPage) || (target === 0 && isRightPage)) snapType = 'spine';
+             else snapType = 'edge';
+          } else if (target % 50 === 0) { // 50, 150, -50
+             snapType = 'center';
+          } else if (Math.abs(target - marginPctX) < 0.1 || Math.abs(target - (100-marginPctX)) < 0.1 ||
+                     Math.abs(target - marginPctY) < 0.1 || Math.abs(target - (100-marginPctY)) < 0.1) {
+             snapType = 'margin';
+          } else {
+             snapType = 'edge'; // Frame edge
+          }
         }
       }
     });
@@ -249,7 +270,6 @@ export const Page: React.FC<PageProps> = ({
     e.stopPropagation();
     if (onInteractionStart) onInteractionStart();
     
-    // Pre-calculate snap targets
     cachedSnapTargets.current = calculateSnapTargets(frame.id);
     
     setDraggingFrame(frame.id);
@@ -292,29 +312,26 @@ export const Page: React.FC<PageProps> = ({
       const dx = ((e.clientX - dragStartRef.current.x) / rect.width) * 100;
       const dy = ((e.clientY - dragStartRef.current.y) / rect.height) * 100;
 
-      // --- DRAGGING LOGIC ---
       if (draggingFrame) {
         const { initialX, initialY, initialW, initialH } = dragStartRef.current;
         let rawX = initialX + dx;
         let rawY = initialY + dy;
 
-        // Apply Snapping
         const snapX = getSnappedPosition(rawX, initialW, cachedSnapTargets.current.x);
         const snapY = getSnappedPosition(rawY, initialH, cachedSnapTargets.current.y);
 
         let finalX = snapX.snapped;
         let finalY = snapY.snapped;
 
-        // Visual Boundary Clamping (Soft Limits)
-        // Allow spread on Left Page (dragging right > 100%)
-        // Right Page is stricter (0-100)
+        // Allow bleed (extended drag range)
+        // Left Page: can drag into Right Page (up to 200+) and negative (bleed)
+        // Clamping logic for safety so you don't lose the frame
         if (isRightPage) {
-           finalX = Math.max(0, Math.min(100 - initialW, finalX));
+           finalX = Math.max(-100, Math.min(105 - (initialW/2), finalX));
         } else {
-           // Left page can go negative slightly (bleed) or positive (spread)
-           finalX = Math.max(-5, Math.min(205 - initialW, finalX));
+           finalX = Math.max(-5, Math.min(205 - (initialW/2), finalX));
         }
-        finalY = Math.max(0, Math.min(100 - initialH, finalY));
+        finalY = Math.max(-5, Math.min(105 - (initialH/2), finalY));
 
         setActiveGuides({ 
             x: snapX.guide ? [snapX.guide] : [], 
@@ -324,120 +341,114 @@ export const Page: React.FC<PageProps> = ({
         onUpdateFrame(pageIndex, draggingFrame, { x: finalX, y: finalY });
       }
 
-      // --- RESIZING LOGIC ---
       if (resizingFrame) {
         const { initialX, initialY, initialW, initialH, initialRatio } = dragStartRef.current;
         const { handle } = resizingFrame;
         const frame = config.frames.find(f => f.id === resizingFrame.id);
         if (!frame) return;
 
-        let newX = initialX;
-        let newY = initialY;
-        let newW = initialW;
-        let newH = initialH;
+        let guidesX: { pos: number, type: SnapType }[] = [];
+        let guidesY: { pos: number, type: SnapType }[] = [];
 
-        // 1. Calculate Raw Dimensions based on handle
-        if (handle.includes('e')) newW = initialW + dx;
-        if (handle.includes('w')) { newX = initialX + dx; newW = initialW - dx; }
-        if (handle.includes('s')) newH = initialH + dy;
-        if (handle.includes('n')) { newY = initialY + dy; newH = initialH - dy; }
+        let rawX = initialX, rawY = initialY, rawW = initialW, rawH = initialH;
 
-        // 2. Snap the active edges
-        const guidesX: { pos: number, type: SnapType }[] = [];
-        const guidesY: { pos: number, type: SnapType }[] = [];
+        if (handle.includes('e')) rawW = initialW + dx;
+        if (handle.includes('w')) { rawX = initialX + dx; rawW = initialW - dx; }
+        if (handle.includes('s')) rawH = initialH + dy;
+        if (handle.includes('n')) { rawY = initialY + dy; rawH = initialH - dy; }
 
-        // X-Axis Snapping
-        if (handle.includes('e') || handle.includes('w')) {
-            // What edge are we moving?
-            const movingLeft = handle.includes('w');
-            const targetEdge = movingLeft ? newX : (newX + newW);
-            
-            // Find closest snap for this specific edge
-            let bestSnap = targetEdge;
-            let minDelta = SNAP_THRESHOLD;
-            let snapType: SnapType | null = null;
-            
-            cachedSnapTargets.current.x.forEach(target => {
-                const d = Math.abs(target - targetEdge);
-                if (d < minDelta) {
-                    minDelta = d;
-                    bestSnap = target;
-                    snapType = (target === 50) ? 'center' : (target === 100 || target === 0) ? 'spine' : 'edge';
-                }
-            });
+        let finalX = rawX, finalY = rawY, finalW = rawW, finalH = rawH;
 
-            if (snapType) {
-                if (movingLeft) {
-                    const diff = bestSnap - newX;
-                    newX = bestSnap;
-                    newW -= diff;
-                } else {
-                    newW = bestSnap - newX;
-                }
-                guidesX.push({ pos: bestSnap, type: snapType });
-            }
-        }
-
-        // Y-Axis Snapping (Similar logic)
-        if (handle.includes('n') || handle.includes('s')) {
-            const movingTop = handle.includes('n');
-            const targetEdge = movingTop ? newY : (newY + newH);
-            let bestSnap = targetEdge;
-            let minDelta = SNAP_THRESHOLD;
-            let snapType: SnapType | null = null;
-
-            cachedSnapTargets.current.y.forEach(target => {
-                const d = Math.abs(target - targetEdge);
-                if (d < minDelta) {
-                    minDelta = d;
-                    bestSnap = target;
-                    snapType = (target === 50) ? 'center' : 'edge';
-                }
-            });
-
-            if (snapType) {
-                if (movingTop) {
-                    const diff = bestSnap - newY;
-                    newY = bestSnap;
-                    newH -= diff;
-                } else {
-                    newH = bestSnap - newY;
-                }
-                guidesY.push({ pos: bestSnap, type: snapType });
-            }
-        }
-
-        // 3. Aspect Ratio & Constraints
         if (frame.isLocked) {
-             // If we snapped one dimension, force the other to match ratio
-             // This is complex because snapping X might violate snapping Y or aspect ratio
-             // For simplicity/robustness: Width dominates, adjust Height
-             const useWidth = (handle.includes('e') || handle.includes('w'));
-             if (useWidth) {
-                 newH = newW / initialRatio;
-                 if (handle.includes('n')) newY = (initialY + initialH) - newH;
+             let driver: 'width' | 'height' = 'width';
+             if (handle === 'n' || handle === 's') driver = 'height';
+             else if (handle === 'e' || handle === 'w') driver = 'width';
+             
+             if (driver === 'width') {
+                 let targetEdge = handle.includes('w') ? rawX : (rawX + rawW);
+                 let snappedEdge = targetEdge;
+                 let snapType: SnapType | null = null;
+                 
+                 cachedSnapTargets.current.x.forEach(t => {
+                     if (Math.abs(t - targetEdge) < SNAP_THRESHOLD) {
+                         snappedEdge = t;
+                         snapType = (t === 0 || t === 100 || t===200) ? 'edge' : (t % 50 === 0) ? 'center' : 'margin';
+                         if ((t===100 && !isRightPage) || (t===0 && isRightPage)) snapType = 'spine';
+                     }
+                 });
+
+                 if (handle.includes('w')) {
+                    finalW = (initialX + initialW) - snappedEdge;
+                    finalX = snappedEdge;
+                 } else {
+                    finalW = snappedEdge - initialX;
+                 }
+                 if (snapType) guidesX.push({ pos: snappedEdge, type: snapType });
+
+                 finalH = finalW / initialRatio;
+                 if (handle.includes('n')) finalY = (initialY + initialH) - finalH;
+                 
              } else {
-                 newW = newH * initialRatio;
-                 if (handle.includes('w')) newX = (initialX + initialW) - newW;
+                 let targetEdge = handle.includes('n') ? rawY : (rawY + rawH);
+                 let snappedEdge = targetEdge;
+                 let snapType: SnapType | null = null;
+
+                 cachedSnapTargets.current.y.forEach(t => {
+                     if (Math.abs(t - targetEdge) < SNAP_THRESHOLD) {
+                         snappedEdge = t;
+                         snapType = (t === 0 || t === 100) ? 'edge' : (t === 50) ? 'center' : 'margin';
+                     }
+                 });
+
+                 if (handle.includes('n')) {
+                    finalH = (initialY + initialH) - snappedEdge;
+                    finalY = snappedEdge;
+                 } else {
+                    finalH = snappedEdge - initialY;
+                 }
+                 if (snapType) guidesY.push({ pos: snappedEdge, type: snapType });
+
+                 finalW = finalH * initialRatio;
+                 if (handle.includes('w')) finalX = (initialX + initialW) - finalW;
+             }
+        } else {
+             // Unlocked Resizing
+             if (handle.includes('e') || handle.includes('w')) {
+                const movingLeft = handle.includes('w');
+                const targetEdge = movingLeft ? rawX : (rawX + rawW);
+                let snappedEdge = targetEdge;
+                let snapType: SnapType | null = null;
+                cachedSnapTargets.current.x.forEach(t => {
+                    if (Math.abs(t - targetEdge) < SNAP_THRESHOLD) { snappedEdge = t; snapType = (t===100 || t===0) ? 'edge' : 'margin'; if(t===100 && !isRightPage) snapType='spine'; }
+                });
+                if (snapType) {
+                    if (movingLeft) { finalX = snappedEdge; finalW = (initialX + initialW) - snappedEdge; } 
+                    else { finalW = snappedEdge - initialX; }
+                    guidesX.push({ pos: snappedEdge, type: snapType });
+                }
+             }
+
+             if (handle.includes('n') || handle.includes('s')) {
+                const movingTop = handle.includes('n');
+                const targetEdge = movingTop ? rawY : (rawY + rawH);
+                let snappedEdge = targetEdge;
+                let snapType: SnapType | null = null;
+                cachedSnapTargets.current.y.forEach(t => {
+                    if (Math.abs(t - targetEdge) < SNAP_THRESHOLD) { snappedEdge = t; snapType = (t===100 || t===0) ? 'edge' : 'margin'; }
+                });
+                if (snapType) {
+                    if (movingTop) { finalY = snappedEdge; finalH = (initialY + initialH) - snappedEdge; }
+                    else { finalH = snappedEdge - initialY; }
+                    guidesY.push({ pos: snappedEdge, type: snapType });
+                }
              }
         }
 
-        // 4. Min Size & Safe Bounds
-        if (newW < 2) newW = 2;
-        if (newH < 2) newH = 2;
-        
-        // Clamp visually
-        const maxRight = isRightPage ? 100 : 205;
-        if (newX < (isRightPage ? 0 : -5)) { 
-            // Prevent dragging left past bleed
-             if (!handle.includes('e')) { // if moving left handle
-                 const diff = (isRightPage ? 0 : -5) - newX;
-                 newX += diff; newW -= diff; 
-             }
-        }
-        
+        if (finalW < 2) finalW = 2;
+        if (finalH < 2) finalH = 2;
+
         setActiveGuides({ x: guidesX, y: guidesY });
-        onUpdateFrame(pageIndex, resizingFrame.id, { x: newX, y: newY, width: newW, height: newH });
+        onUpdateFrame(pageIndex, resizingFrame.id, { x: finalX, y: finalY, width: finalW, height: finalH });
       }
     };
 
@@ -458,7 +469,6 @@ export const Page: React.FC<PageProps> = ({
     };
   }, [draggingFrame, resizingFrame, pageIndex, onUpdateFrame, config.frames, ratio, isRightPage]);
 
-  const paddingValue = (config.margin / 16) * width;
   const allowOverflow = !isRightPage && config.frames.some(f => f.width > 100 || f.isSpread);
 
   return (
@@ -472,6 +482,20 @@ export const Page: React.FC<PageProps> = ({
       className={`bg-white relative flex flex-col ${allowOverflow ? 'overflow-visible z-20' : 'overflow-hidden z-10'} ${isRightPage ? 'border-l border-slate-300' : ''}`}
       style={{ width: `${width}px`, height: `${width / (ratio || 1)}px` }}
     >
+      {/* Margin / Safe Area Overlay */}
+      {config.margin > 0 && (
+         <div 
+           className="absolute inset-0 pointer-events-none margin-overlay z-20"
+           style={{
+             top: `${marginPctY}%`, bottom: `${marginPctY}%`,
+             left: `${marginPctX}%`, right: `${marginPctX}%`,
+           }}
+         >
+            <div className="w-full h-full border border-dashed border-blue-400/40" />
+            <div className="absolute -top-3 left-0 text-[7px] text-blue-400/50 uppercase font-bold tracking-wider">Safe Area</div>
+         </div>
+      )}
+
       {/* Context Menu using Portal */}
       {contextMenu && createPortal(
         <div 
@@ -555,6 +579,24 @@ export const Page: React.FC<PageProps> = ({
           <div className="h-px bg-[#333] my-1" />
 
           {config.frames.find(f => f.id === contextMenu.frameId)?.imageId && (
+             <>
+             <button 
+               className="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider hover:bg-slate-800 transition-colors flex items-center gap-2"
+               onClick={() => {
+                 const frame = config.frames.find(f => f.id === contextMenu.frameId);
+                 const image = libraryImages.find(img => img.id === frame?.imageId);
+                 if (frame && image) {
+                    const imgRatio = image.aspectRatio || 1;
+                    const newHeight = frame.width * (ratio / imgRatio);
+                    onUpdateFrame(pageIndex, frame.id, { height: newHeight, isLocked: true });
+                 }
+                 setContextMenu(null);
+               }}
+             >
+               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"/></svg>
+               Match Frame to Image
+             </button>
+
              <button 
                className="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-300 hover:bg-slate-800 transition-colors flex items-center gap-2"
                onClick={() => {
@@ -565,6 +607,7 @@ export const Page: React.FC<PageProps> = ({
                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12"/></svg>
                Remove Photo
              </button>
+             </>
           )}
           
           <button 
@@ -586,7 +629,8 @@ export const Page: React.FC<PageProps> = ({
             key={`gx-${i}`} 
             className={`absolute top-0 bottom-0 w-px z-[60] pointer-events-none transition-opacity duration-200 ${
                 guide.type === 'spine' ? 'bg-fuchsia-500 shadow-[0_0_8px_rgba(217,70,239,0.8)]' : 
-                guide.type === 'center' ? 'bg-cyan-400' : 'bg-blue-500/50 dashed-line'
+                guide.type === 'center' ? 'bg-cyan-400' : 
+                guide.type === 'margin' ? 'bg-green-400' : 'bg-blue-500/50 dashed-line'
             }`} 
             style={{ left: `${guide.pos}%` }} 
         />
@@ -595,33 +639,34 @@ export const Page: React.FC<PageProps> = ({
         <div 
             key={`gy-${i}`} 
             className={`absolute left-0 right-0 h-px z-[60] pointer-events-none transition-opacity duration-200 ${
-                guide.type === 'center' ? 'bg-cyan-400' : 'bg-blue-500/50 dashed-line'
+                guide.type === 'center' ? 'bg-cyan-400' : 
+                guide.type === 'margin' ? 'bg-green-400' : 'bg-blue-500/50 dashed-line'
             }`} 
             style={{ top: `${guide.pos}%` }} 
         />
       ))}
 
-      <div className="absolute inset-0 page-bg-overlay" style={{ padding: `${paddingValue}px` }}>
-        <div className="relative w-full h-full">
-          {config.frames.map((frame) => {
-            const image = libraryImages.find(img => img.id === frame.imageId);
-            const isActive = activeFrameId === frame.id;
-            
-            return (
-              <div
-                key={frame.id}
-                onMouseDown={(e) => startDragging(e, frame)}
-                onContextMenu={(e) => handleContextMenu(e, frame.id)}
-                onDrop={(e) => handleFrameDrop(e, frame.id)}
-                className={`absolute group cursor-move border transition-shadow duration-200 ${isActive ? 'z-50 border-blue-500 ring-4 ring-blue-500/10' : 'z-10 border-transparent hover:border-slate-300'} bg-slate-50 overflow-visible rounded-sm shadow-sm hover:shadow-md`}
-                style={{
-                  left: `${frame.x}%`,
-                  top: `${frame.y}%`,
-                  width: `${frame.width}%`,
-                  height: `${frame.height}%`,
-                  zIndex: frame.zIndex
-                }}
-              >
+      {/* Frames - Direct Children of Container (No more padding wrapper) */}
+      <div className="relative w-full h-full z-30">
+        {config.frames.map((frame) => {
+          const image = libraryImages.find(img => img.id === frame.imageId);
+          const isActive = activeFrameId === frame.id;
+          
+          return (
+            <div
+              key={frame.id}
+              onMouseDown={(e) => startDragging(e, frame)}
+              onContextMenu={(e) => handleContextMenu(e, frame.id)}
+              onDrop={(e) => handleFrameDrop(e, frame.id)}
+              className={`absolute group cursor-move border transition-shadow duration-200 ${isActive ? 'z-50 border-blue-500 ring-4 ring-blue-500/10' : 'z-30 border-transparent hover:border-slate-300'} bg-slate-50 overflow-visible rounded-sm shadow-sm hover:shadow-md`}
+              style={{
+                left: `${frame.x}%`,
+                top: `${frame.y}%`,
+                width: `${frame.width}%`,
+                height: `${frame.height}%`,
+                zIndex: frame.zIndex
+              }}
+            >
                 <div className="w-full h-full relative overflow-hidden">
                   {image ? (
                     <div className="w-full h-full relative">
@@ -691,10 +736,9 @@ export const Page: React.FC<PageProps> = ({
                     <div onMouseDown={(e) => { e.stopPropagation(); startResizing(e, frame, 'w'); }}  className="absolute -left-1.5 top-1/2 w-3 h-3 -mt-1.5 bg-white border-2 border-blue-600 cursor-w-resize z-50 rounded-sm shadow-sm" />
                   </>
                 )}
-              </div>
-            );
-          })}
-        </div>
+            </div>
+          );
+        })}
       </div>
       
       {!isRightPage && (

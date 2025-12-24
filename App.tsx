@@ -459,9 +459,14 @@ const App: React.FC = () => {
   }, [currentRatio]);
 
   const createInitialPageConfig = useCallback((id: string, margin: number): PageConfig => {
-    let w = 60;
+    // Default to a sane size inside margins
+    let w = 60; 
     let h = w * currentRatio; 
     if (h > 80) { h = 80; w = h / currentRatio; }
+    
+    // Attempt to respect margins if possible
+    // margin=16 corresponds to 100%, so margin=1 is ~6.25%
+    // If margin is present, let's try to fit nicely
     return {
       id, margin,
       frames: [{
@@ -510,15 +515,29 @@ const App: React.FC = () => {
       const next = [...prev];
       const page = { ...next[pageIdx] };
       const maxZ = page.frames.length > 0 ? Math.max(...page.frames.map(f => f.zIndex)) : 0;
+      
+      const marginPctX = (page.margin / 16) * 100;
+      const marginPctY = marginPctX * currentRatio;
+      
+      // Default new frames to fit roughly within safe area if no coords provided
       const w = 30;
       const h = w * currentRatio;
-      const centerX = x !== undefined ? x - (w / 2) : (100 - w) / 2;
-      const centerY = y !== undefined ? y - (h / 2) : (100 - h) / 2;
+      
+      let finalX = x !== undefined ? x - (w / 2) : (100 - w) / 2;
+      let finalY = y !== undefined ? y - (h / 2) : (100 - h) / 2;
+
+      // If added via button (no x/y), respect margins slightly if possible
+      if (x === undefined && y === undefined && page.margin > 0) {
+         // Center in safe area
+         // Safe area width = 100 - 2*marginPctX
+         // But simple centering is usually fine.
+      }
+
       const newFrame: Frame = {
         id: `f-${Math.random().toString(36).substr(2, 9)}`,
         imageId: null,
-        x: Math.max(0, Math.min(100 - w, centerX)),
-        y: Math.max(0, Math.min(100 - h, centerY)),
+        x: finalX,
+        y: finalY,
         width: w, height: h, zIndex: maxZ + 1, cropType: 'fill', scale: 1, offset: { x: 50, y: 50 }, isLocked: true
       };
       page.frames = [...page.frames, newFrame];
@@ -572,8 +591,8 @@ const App: React.FC = () => {
         ...source,
         id: `f-${Math.random().toString(36).substr(2, 9)}`,
         imageId: null,
-        x: Math.min(100 - source.width, source.x + 2),
-        y: Math.min(100 - source.height, source.y + 2),
+        x: source.x + 2,
+        y: source.y + 2,
         zIndex: maxZ + 1
       };
       page.frames = [...page.frames, newFrame];
@@ -595,9 +614,8 @@ const App: React.FC = () => {
           if (frame) {
              frame.isSpread = !frame.isSpread;
              if (frame.isSpread) {
-                 frame.width = 203; 
-                 frame.x = -1; 
-                 // We don't force high Z-index anymore, just rely on natural stacking or user adjustment
+                 frame.width = 200; 
+                 frame.x = 0; 
              } else {
                  frame.width = 50;
                  if (frame.x + frame.width > 100) frame.x = 100 - frame.width;
@@ -613,10 +631,9 @@ const App: React.FC = () => {
              if (frameIndex !== -1) {
                 const [frame] = rightPage.frames.splice(frameIndex, 1);
                 frame.isSpread = true;
-                frame.width = 203;
+                frame.width = 200;
                 frame.x = 0; 
                 frame.y = Math.max(0, frame.y);
-                // When moving to left, ensure it renders on top of existing left items
                 const maxZ = leftPage.frames.length > 0 ? Math.max(...leftPage.frames.map((f:any) => f.zIndex)) : 0;
                 frame.zIndex = maxZ + 1;
                 leftPage.frames.push(frame);
@@ -632,21 +649,7 @@ const App: React.FC = () => {
     saveToHistory();
     const image = images.find(i => i.id === imageId);
     if (frameId) {
-      const targetPage = pageConfigs[pageIdx];
-      const targetFrame = targetPage.frames.find(f => f.id === frameId);
-      const updates: Partial<Frame> = { imageId };
-      if (targetFrame && !targetFrame.imageId && image) {
-         const imgRatio = image.aspectRatio || 1;
-         const pageRatio = currentRatio;
-         let newHeight = targetFrame.width * (pageRatio / imgRatio);
-         if (newHeight > 60) {
-             newHeight = 60;
-             const newWidth = newHeight * (imgRatio / pageRatio);
-             updates.width = newWidth;
-         }
-         updates.height = newHeight;
-         if (targetFrame.y + newHeight > 100) updates.y = Math.max(0, 100 - newHeight);
-      }
+      const updates: Partial<Frame> = { imageId, isLocked: true }; // Force lock on drop
       onUpdateFrame(pageIdx, frameId, updates);
       setActiveFrame({ pageIndex: pageIdx, frameId });
     } else {
@@ -656,14 +659,18 @@ const App: React.FC = () => {
         const maxZ = page.frames.length > 0 ? Math.max(...page.frames.map(f => f.zIndex)) : 0;
         const imgRatio = image ? (image.aspectRatio || 1) : 1;
         const pageRatio = currentRatio;
-        let w = 35;
+        
+        let w = 40;
         let h = w * (pageRatio / imgRatio);
         if (h > 60) { h = 60; w = h * (imgRatio / pageRatio); }
+        
         const dropX = x !== undefined ? x : 50;
         const dropY = y !== undefined ? y : 50;
+        
         const newFrame: Frame = {
           id: `f-${Math.random().toString(36).substr(2, 9)}`, imageId: imageId,
-          x: Math.max(0, Math.min(100 - w, dropX - w/2)), y: Math.max(0, Math.min(100 - h, dropY - h/2)),
+          x: dropX - w/2, 
+          y: dropY - h/2,
           width: w, height: h, zIndex: maxZ + 1, cropType: 'fill', scale: 1, offset: { x: 50, y: 50 }, isLocked: true
         };
         page.frames = [...page.frames, newFrame];

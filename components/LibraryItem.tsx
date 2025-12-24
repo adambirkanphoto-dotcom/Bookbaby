@@ -1,7 +1,7 @@
 
 import React, { useRef, useState } from 'react';
 import { PhotoImage } from '../types';
-import { Tooltip } from '../App';
+import { Tooltip } from './Tooltip';
 
 interface LibraryItemProps {
   image: PhotoImage;

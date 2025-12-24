@@ -1,5 +1,5 @@
 
-export type SpreadDimension = '8x8' | '10x10' | 'A4_Landscape' | 'A4_Portrait' | 'Custom';
+export type SpreadDimension = '1:1' | '2:3' | '3:2' | '4:5' | '5:4' | 'A4_Landscape' | 'A4_Portrait' | 'Custom';
 
 export interface ImageOffset {
   x: number;
@@ -25,6 +25,7 @@ export interface Frame {
   scale: number;
   offset: ImageOffset;
   isLocked: boolean;
+  isSpread?: boolean;
 }
 
 export interface PageConfig {

@@ -5,78 +5,76 @@ import { PhotoImage, SpreadDimension, PageConfig, Frame, ImageOffset } from './t
 import { DIMENSION_RATIOS, DIMENSION_LABELS, INITIAL_IMAGES } from './constants';
 import { LibraryItem } from './components/LibraryItem';
 import { Page } from './components/Page';
+import { Tooltip } from './components/Tooltip';
 
-// Smarter Tooltip component that avoids being cut off
-export const Tooltip: React.FC<{ text: string, children: React.ReactNode, position?: 'top' | 'bottom' | 'left' | 'right' }> = ({ text, children, position = 'top' }) => {
-  const [visible, setVisible] = useState(false);
-  const [coords, setCoords] = useState({ top: 0, left: 0 });
-  const triggerRef = useRef<HTMLDivElement>(null);
-  const timerRef = useRef<number | null>(null);
+// --- Custom Dimension Modal ---
+interface CustomDimensionModalProps {
+  onClose: () => void;
+  onApply: (width: number, height: number) => void;
+  currentRatio: number;
+}
 
-  const updatePosition = () => {
-    if (!triggerRef.current) return;
-    const rect = triggerRef.current.getBoundingClientRect();
-    let top = 0;
-    let left = 0;
+const CustomDimensionModal: React.FC<CustomDimensionModalProps> = ({ onClose, onApply, currentRatio }) => {
+  // Default to a 10" height base, calculating width from current ratio
+  const [width, setWidth] = useState<number>(() => parseFloat((10 * currentRatio).toFixed(2)));
+  const [height, setHeight] = useState<number>(10);
 
-    switch (position) {
-      case 'top':
-        top = rect.top - 8;
-        left = rect.left + rect.width / 2;
-        break;
-      case 'bottom':
-        top = rect.bottom + 8;
-        left = rect.left + rect.width / 2;
-        break;
-      case 'left':
-        top = rect.top + rect.height / 2;
-        left = rect.left - 8;
-        break;
-      case 'right':
-        top = rect.top + rect.height / 2;
-        left = rect.right + 8;
-        break;
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (width > 0 && height > 0) {
+      onApply(width, height);
     }
-    setCoords({ top, left });
-  };
-
-  const handleEnter = () => {
-    updatePosition();
-    timerRef.current = window.setTimeout(() => setVisible(true), 500);
-  };
-  
-  const handleLeave = () => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-    setVisible(false);
-  };
-
-  const positionClasses = {
-    top: '-translate-x-1/2 -translate-y-full',
-    bottom: '-translate-x-1/2',
-    left: '-translate-x-full -translate-y-1/2',
-    right: '-translate-y-1/2'
   };
 
   return (
-    <div className="relative inline-block" ref={triggerRef} onMouseEnter={handleEnter} onMouseLeave={handleLeave}>
-      {children}
-      {visible && (
-        <div 
-          className={`fixed z-[999] px-2 py-1 bg-black/95 text-[9px] font-black uppercase tracking-widest text-white rounded border border-white/10 whitespace-nowrap shadow-2xl pointer-events-none transition-opacity duration-200 ${positionClasses[position]}`}
-          style={{ top: coords.top, left: coords.left }}
-        >
-          {text}
-          <div className={`absolute w-1.5 h-1.5 bg-black/95 border-b border-r border-white/10 rotate-45 ${
-            position === 'top' ? 'bottom-[-4px] left-1/2 -translate-x-1/2' :
-            position === 'bottom' ? 'top-[-4px] left-1/2 -translate-x-1/2 border-t border-l border-b-0 border-r-0' :
-            position === 'left' ? 'right-[-4px] top-1/2 -translate-y-1/2 border-t border-r border-b-0 border-l-0' :
-            'left-[-4px] top-1/2 -translate-y-1/2 border-b border-l border-t-0 border-r-0'
-          }`} />
+    <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-[#121212] border border-[#333] rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col">
+        <div className="px-6 py-4 border-b border-[#222] bg-[#161616] flex justify-between items-center">
+          <h2 className="text-white font-black uppercase tracking-widest text-xs">Custom Dimensions</h2>
+          <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
         </div>
-      )}
+        
+        <form onSubmit={handleSubmit} className="p-6 flex flex-col gap-6">
+          <div className="flex items-center gap-4">
+            <div className="flex-1">
+              <label className="block text-[9px] font-black uppercase tracking-widest text-slate-500 mb-2">Width (Inches)</label>
+              <input 
+                type="number" step="0.1" min="1" max="40"
+                value={width} onChange={e => setWidth(parseFloat(e.target.value))}
+                className="w-full bg-[#0a0a0a] border border-[#333] rounded-lg px-3 py-2 text-sm font-bold text-white focus:outline-none focus:border-blue-600 transition-colors text-center"
+              />
+            </div>
+            <span className="text-slate-600 font-bold pt-5">×</span>
+            <div className="flex-1">
+              <label className="block text-[9px] font-black uppercase tracking-widest text-slate-500 mb-2">Height (Inches)</label>
+              <input 
+                type="number" step="0.1" min="1" max="40"
+                value={height} onChange={e => setHeight(parseFloat(e.target.value))}
+                className="w-full bg-[#0a0a0a] border border-[#333] rounded-lg px-3 py-2 text-sm font-bold text-white focus:outline-none focus:border-blue-600 transition-colors text-center"
+              />
+            </div>
+          </div>
+          
+          <div className="bg-[#1a1a1a] rounded-lg p-3 border border-[#222]">
+            <div className="flex justify-between items-center text-[10px] uppercase font-bold text-slate-400">
+              <span>Aspect Ratio</span>
+              <span className="text-white">{(width/height).toFixed(3)} : 1</span>
+            </div>
+          </div>
+
+          <div className="flex gap-3">
+             <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-widest text-slate-400 hover:bg-[#222] hover:text-white transition-colors">Cancel</button>
+             <button type="submit" className="flex-1 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-widest bg-blue-600 text-white hover:bg-blue-500 shadow-lg shadow-blue-900/20 transition-all">Apply Size</button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 };
+
+// --- PageActionBar Component ---
 
 interface PageActionBarProps {
   index: number;
@@ -151,6 +149,8 @@ const PageActionBar: React.FC<PageActionBarProps> = ({
   );
 };
 
+// ... ExportModal ... (No changes here, skipping for brevity but assuming it exists)
+
 // --- Export Types & Component ---
 
 type ExportFormat = 'pdf' | 'jpg' | 'idml' | 'psd' | 'affinity' | 'json';
@@ -205,7 +205,6 @@ const ExportModal: React.FC<ExportModalProps> = ({ onClose, onExport, isExportin
   return (
     <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="bg-[#121212] border border-[#333] rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
-        {/* Header */}
         <div className="px-6 py-4 border-b border-[#222] flex justify-between items-center bg-[#161616]">
           <h2 className="text-white font-black uppercase tracking-widest text-sm">Export Project</h2>
           {!isExporting && (
@@ -214,8 +213,6 @@ const ExportModal: React.FC<ExportModalProps> = ({ onClose, onExport, isExportin
              </button>
           )}
         </div>
-
-        {/* Content */}
         <div className="p-6 overflow-y-auto custom-scrollbar">
           {isExporting ? (
              <div className="flex flex-col items-center justify-center py-12">
@@ -231,7 +228,6 @@ const ExportModal: React.FC<ExportModalProps> = ({ onClose, onExport, isExportin
              </div>
           ) : (
             <div className="flex flex-col gap-8">
-              {/* File Name */}
               <div>
                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Project Filename</label>
                  <input 
@@ -242,8 +238,6 @@ const ExportModal: React.FC<ExportModalProps> = ({ onClose, onExport, isExportin
                    placeholder="Enter filename..."
                  />
               </div>
-
-              {/* Formats Grid */}
               <div>
                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Export Format</label>
                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
@@ -264,17 +258,13 @@ const ExportModal: React.FC<ExportModalProps> = ({ onClose, onExport, isExportin
                     ))}
                  </div>
               </div>
-
-              {/* Advanced Settings */}
               {format !== 'json' && (
                 <div className="bg-[#1a1a1a] rounded-xl p-5 border border-[#222]">
                    <div className="flex items-center gap-2 mb-4">
                       <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
                       <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Print Production Settings</h4>
                    </div>
-
                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                      {/* DPI */}
                       <div>
                          <label className="block text-[9px] font-bold text-slate-500 mb-2 uppercase">Resolution (DPI)</label>
                          <div className="flex bg-[#0a0a0a] rounded-lg p-1 border border-[#333]">
@@ -289,8 +279,6 @@ const ExportModal: React.FC<ExportModalProps> = ({ onClose, onExport, isExportin
                             ))}
                          </div>
                       </div>
-
-                      {/* Color Profile */}
                       <div>
                          <label className="block text-[9px] font-bold text-slate-500 mb-2 uppercase">Color Profile</label>
                          <div className="flex bg-[#0a0a0a] rounded-lg p-1 border border-[#333]">
@@ -298,8 +286,6 @@ const ExportModal: React.FC<ExportModalProps> = ({ onClose, onExport, isExportin
                             <button onClick={() => setColorProfile('cmyk')} className={`flex-1 py-1.5 text-[9px] font-black rounded ${colorProfile === 'cmyk' ? 'bg-slate-700 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}>CMYK (Print)</button>
                          </div>
                       </div>
-
-                      {/* Toggles */}
                       <div className="sm:col-span-2 flex gap-4">
                          <label className="flex items-center gap-2 cursor-pointer group">
                             <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${bleed ? 'bg-blue-600 border-blue-600' : 'bg-[#0a0a0a] border-[#333] group-hover:border-[#555]'}`}>
@@ -308,7 +294,6 @@ const ExportModal: React.FC<ExportModalProps> = ({ onClose, onExport, isExportin
                             <input type="checkbox" className="hidden" checked={bleed} onChange={() => setBleed(!bleed)} />
                             <span className={`text-[10px] font-bold uppercase tracking-wider ${bleed ? 'text-white' : 'text-slate-500'}`}>Include Bleed (0.125")</span>
                          </label>
-
                          <label className="flex items-center gap-2 cursor-pointer group">
                             <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${cropMarks ? 'bg-blue-600 border-blue-600' : 'bg-[#0a0a0a] border-[#333] group-hover:border-[#555]'}`}>
                                {cropMarks && <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"/></svg>}
@@ -323,8 +308,6 @@ const ExportModal: React.FC<ExportModalProps> = ({ onClose, onExport, isExportin
             </div>
           )}
         </div>
-
-        {/* Footer */}
         <div className="px-6 py-4 border-t border-[#222] bg-[#161616] flex justify-end gap-3">
            {!isExporting && (
              <>
@@ -355,7 +338,7 @@ const ExportModal: React.FC<ExportModalProps> = ({ onClose, onExport, isExportin
 
 const App: React.FC = () => {
   const [images, setImages] = useState<PhotoImage[]>(INITIAL_IMAGES);
-  const [dimension, setDimension] = useState<SpreadDimension>('8x8');
+  const [dimension, setDimension] = useState<SpreadDimension>('1:1');
   const [customRatio, setCustomRatio] = useState(1);
   const [pageConfigs, setPageConfigs] = useState<PageConfig[]>([]);
   const [zoomLevel, setZoomLevel] = useState(0.8);
@@ -364,13 +347,15 @@ const App: React.FC = () => {
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
   const [draggedLibraryImageId, setDraggedLibraryImageId] = useState<string | null>(null);
   const [selectedLibraryImageIds, setSelectedLibraryImageIds] = useState<string[]>([]);
-  
-  // Selection state lifted to App level to handle "void" clicks
+  const [showDimensionModal, setShowDimensionModal] = useState(false);
   const [activeFrame, setActiveFrame] = useState<{ pageIndex: number, frameId: string } | null>(null);
-
-  // History State
   const [history, setHistory] = useState<PageConfig[][]>([]);
   const [future, setFuture] = useState<PageConfig[][]>([]);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0);
+  const [exportStatus, setExportStatus] = useState('');
+  const [exportDefaultName, setExportDefaultName] = useState('My Awesome Photobook');
 
   const currentRatio = useMemo(() => {
     if (dimension === 'Custom') return customRatio;
@@ -378,58 +363,31 @@ const App: React.FC = () => {
   }, [dimension, customRatio]);
 
   const prevRatioRef = useRef<number>(currentRatio);
-
-  // Export state
-  const [showExportModal, setShowExportModal] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
-  const [exportProgress, setExportProgress] = useState(0);
-  const [exportStatus, setExportStatus] = useState('');
-  const [exportDefaultName, setExportDefaultName] = useState('My Awesome Photobook');
-
-  const promptForCustomDimension = () => {
-    // Show current approximate dimensions as default (assuming height=10 for reference)
-    const baseH = 10;
-    const baseW = parseFloat((baseH * currentRatio).toFixed(2));
-    const defaultVal = `${baseW}x${baseH}`;
-
-    const input = window.prompt("Enter global page dimensions (Width x Height, e.g. '12x8' or '8x10'):", defaultVal);
-    
-    if (input === null) return; // User Cancelled
-
-    // Robust regex to capture one or two numbers (integers or decimals)
-    const numbers = input.match(/[0-9]+(\.[0-9]+)?/g)?.map(Number);
-    
-    if (numbers && numbers.length >= 2) {
-       const w = numbers[0];
-       const h = numbers[1];
-       if (w > 0 && h > 0) {
-          setCustomRatio(w / h);
-          setDimension('Custom');
-       } else {
-          alert("Dimensions must be positive numbers.");
-       }
-    } else if (numbers && numbers.length === 1 && numbers[0] > 0) {
-       // Single number treated as ratio
-       setCustomRatio(numbers[0]);
-       setDimension('Custom');
-    } else {
-       alert("Invalid dimensions. Please use standard 'Width x Height' format (e.g. 12x8).");
-    }
-  };
+  const previousDimensionRef = useRef<SpreadDimension>('1:1');
 
   const handleDimensionChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value as SpreadDimension;
     if (val === 'Custom') {
-      promptForCustomDimension();
-      return;
+      previousDimensionRef.current = dimension;
+      setShowDimensionModal(true);
+    } else {
+      setDimension(val);
     }
-    setDimension(val);
   };
 
-  // History Actions
+  const applyCustomDimensions = (width: number, height: number) => {
+    const ratio = width / height;
+    setCustomRatio(ratio);
+    setDimension('Custom');
+    setShowDimensionModal(false);
+  };
+  
+  const cancelCustomDimensions = () => {
+    setShowDimensionModal(false);
+  };
+
   const saveToHistory = useCallback(() => {
     setHistory(prev => {
-      // Limit history to 20 steps to save memory
       const newHist = [...prev, JSON.parse(JSON.stringify(pageConfigs))];
       return newHist.slice(-20);
     });
@@ -440,7 +398,6 @@ const App: React.FC = () => {
     if (history.length === 0) return;
     const previous = history[history.length - 1];
     const newHistory = history.slice(0, -1);
-    
     setFuture(prev => [JSON.parse(JSON.stringify(pageConfigs)), ...prev]);
     setPageConfigs(previous);
     setHistory(newHistory);
@@ -451,7 +408,6 @@ const App: React.FC = () => {
     if (future.length === 0) return;
     const next = future[0];
     const newFuture = future.slice(1);
-
     setHistory(prev => [...prev, JSON.parse(JSON.stringify(pageConfigs))]);
     setPageConfigs(next);
     setFuture(newFuture);
@@ -461,11 +417,7 @@ const App: React.FC = () => {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
-        if (e.shiftKey) {
-          redo();
-        } else {
-          undo();
-        }
+        if (e.shiftKey) redo(); else undo();
         e.preventDefault();
       }
       if ((e.metaKey || e.ctrlKey) && e.key === 'y') {
@@ -478,56 +430,27 @@ const App: React.FC = () => {
   }, [undo, redo]);
 
   useEffect(() => {
-    if (pageConfigs.length === 0) {
-      setPageConfigs([
-        createInitialPageConfig(`p1-${Date.now()}`, globalBleedValue),
-        createInitialPageConfig(`p2-${Date.now()}`, globalBleedValue)
-      ]);
-    }
-  }, [pageConfigs.length, globalBleedValue]);
-
-  // Adjust frame percentages when book dimensions change
-  useEffect(() => {
     const newRatio = currentRatio;
     const oldRatio = prevRatioRef.current;
-
     if (Math.abs(newRatio - oldRatio) > 0.001) {
       const ratioFactor = newRatio / oldRatio;
-      
       setPageConfigs(prev => prev.map(page => ({
         ...page,
         frames: page.frames.map(frame => {
-          // If frame is empty (no image), reset it to default large size to match new page dimensions
-          if (!frame.imageId) {
-            return {
-              ...frame,
-              x: 10, y: 10, width: 80, height: 80
-            };
-          }
-
           let newWidth = frame.width;
-          let newHeight = frame.height * ratioFactor;
-          let newX = frame.x;
+          let newHeight = frame.height * ratioFactor; 
           let newY = frame.y * ratioFactor;
-
-          // If frame height now overflows the page, scale both dimensions down to fit while keeping aspect
+          let newX = frame.x;
           if (newHeight > 100) {
-            const scaleDown = 100 / newHeight;
-            newHeight = 100;
-            newWidth = newWidth * scaleDown;
+             const scaleDown = 100 / newHeight;
+             newHeight = 100;
+             newWidth = newWidth * scaleDown;
+             newY = 0;
+             newX = Math.max(0, Math.min(100 - newWidth, newX));
+          } else if (newY + newHeight > 100) {
+             newY = 100 - newHeight;
           }
-          
-          // Center adjustment if scaling happened or if pushed out
-          newY = Math.max(0, Math.min(100 - newHeight, newY));
-          newX = Math.max(0, Math.min(100 - newWidth, newX));
-
-          return {
-            ...frame,
-            width: newWidth,
-            height: newHeight,
-            x: newX,
-            y: newY
-          };
+          return { ...frame, width: newWidth, height: newHeight, x: newX, y: newY };
         })
       })));
       prevRatioRef.current = newRatio;
@@ -535,18 +458,37 @@ const App: React.FC = () => {
     }
   }, [currentRatio]);
 
-  // Sidebar resizing logic
+  const createInitialPageConfig = useCallback((id: string, margin: number): PageConfig => {
+    let w = 60;
+    let h = w * currentRatio; 
+    if (h > 80) { h = 80; w = h / currentRatio; }
+    return {
+      id, margin,
+      frames: [{
+        id: `f-${Math.random().toString(36).substr(2, 9)}`,
+        imageId: null,
+        x: (100 - w) / 2, y: (100 - h) / 2, width: w, height: h, zIndex: 1,
+        cropType: 'fill', scale: 1, offset: { x: 50, y: 50 }, isLocked: true
+      }]
+    };
+  }, [currentRatio]);
+
+  useEffect(() => {
+    if (pageConfigs.length === 0) {
+      setPageConfigs([
+        createInitialPageConfig(`p1-${Date.now()}`, globalBleedValue),
+        createInitialPageConfig(`p2-${Date.now()}`, globalBleedValue)
+      ]);
+    }
+  }, [pageConfigs.length, globalBleedValue, createInitialPageConfig]);
+
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isResizingSidebar) return;
       const newWidth = Math.max(200, Math.min(600, e.clientX));
       setSidebarWidth(newWidth);
     };
-
-    const handleMouseUp = () => {
-      setIsResizingSidebar(false);
-    };
-
+    const handleMouseUp = () => setIsResizingSidebar(false);
     if (isResizingSidebar) {
       window.addEventListener('mousemove', handleMouseMove);
       window.addEventListener('mouseup', handleMouseUp);
@@ -556,20 +498,6 @@ const App: React.FC = () => {
       window.removeEventListener('mouseup', handleMouseUp);
     };
   }, [isResizingSidebar]);
-
-  function createInitialPageConfig(id: string, margin: number): PageConfig {
-    return {
-      id,
-      margin,
-      frames: [{
-        id: `f-${Math.random().toString(36).substr(2, 9)}`,
-        imageId: null,
-        x: 10, y: 10, width: 80, height: 80, zIndex: 1,
-        cropType: 'fill', scale: 1, offset: { x: 50, y: 50 },
-        isLocked: true
-      }]
-    };
-  }
 
   const handleGlobalBleedChange = (val: number) => {
     setGlobalBleedValue(val);
@@ -581,32 +509,24 @@ const App: React.FC = () => {
     setPageConfigs(prev => {
       const next = [...prev];
       const page = { ...next[pageIdx] };
-      
       const maxZ = page.frames.length > 0 ? Math.max(...page.frames.map(f => f.zIndex)) : 0;
-      
+      const w = 30;
+      const h = w * currentRatio;
+      const centerX = x !== undefined ? x - (w / 2) : (100 - w) / 2;
+      const centerY = y !== undefined ? y - (h / 2) : (100 - h) / 2;
       const newFrame: Frame = {
         id: `f-${Math.random().toString(36).substr(2, 9)}`,
         imageId: null,
-        x: x !== undefined ? x - 20 : 30,
-        y: y !== undefined ? y - 20 : 30,
-        width: 40,
-        height: 40,
-        zIndex: maxZ + 1,
-        cropType: 'fill',
-        scale: 1,
-        offset: { x: 50, y: 50 },
-        isLocked: true
+        x: Math.max(0, Math.min(100 - w, centerX)),
+        y: Math.max(0, Math.min(100 - h, centerY)),
+        width: w, height: h, zIndex: maxZ + 1, cropType: 'fill', scale: 1, offset: { x: 50, y: 50 }, isLocked: true
       };
-      newFrame.x = Math.max(0, Math.min(60, newFrame.x));
-      newFrame.y = Math.max(0, Math.min(60, newFrame.y));
       page.frames = [...page.frames, newFrame];
       next[pageIdx] = page;
-
       setActiveFrame({ pageIndex: pageIdx, frameId: newFrame.id });
-      
       return next;
     });
-  }, [saveToHistory]);
+  }, [saveToHistory, currentRatio]);
 
   const onUpdateFrame = useCallback((pageIdx: number, frameId: string, updates: Partial<Frame>) => {
     setPageConfigs(prev => {
@@ -627,9 +547,7 @@ const App: React.FC = () => {
       next[pageIdx] = page;
       return next;
     });
-    if (activeFrame?.frameId === frameId) {
-      setActiveFrame(null);
-    }
+    if (activeFrame?.frameId === frameId) setActiveFrame(null);
   }, [activeFrame, saveToHistory]);
 
   const onClearPage = useCallback((pageIdx: number) => {
@@ -649,17 +567,15 @@ const App: React.FC = () => {
       const page = { ...next[pageIdx] };
       const source = page.frames.find(f => f.id === frameId);
       if (!source) return prev;
-
       const maxZ = Math.max(...page.frames.map(f => f.zIndex));
       const newFrame: Frame = {
         ...source,
         id: `f-${Math.random().toString(36).substr(2, 9)}`,
-        imageId: null, // Reset imageId to null so we only duplicate the frame
-        x: Math.min(90, source.x + 5),
-        y: Math.min(90, source.y + 5),
+        imageId: null,
+        x: Math.min(100 - source.width, source.x + 2),
+        y: Math.min(100 - source.height, source.y + 2),
         zIndex: maxZ + 1
       };
-
       page.frames = [...page.frames, newFrame];
       next[pageIdx] = page;
       setActiveFrame({ pageIndex: pageIdx, frameId: newFrame.id });
@@ -667,42 +583,96 @@ const App: React.FC = () => {
     });
   }, [saveToHistory]);
 
+  const onToggleSpread = useCallback((pageIdx: number, frameId: string) => {
+    saveToHistory();
+    setPageConfigs(prev => {
+       const next = JSON.parse(JSON.stringify(prev));
+       const isLeft = pageIdx % 2 === 0;
+       
+       if (isLeft) {
+          const page = next[pageIdx];
+          const frame = page.frames.find((f: Frame) => f.id === frameId);
+          if (frame) {
+             frame.isSpread = !frame.isSpread;
+             if (frame.isSpread) {
+                 frame.width = 203; 
+                 frame.x = -1; 
+                 // We don't force high Z-index anymore, just rely on natural stacking or user adjustment
+             } else {
+                 frame.width = 50;
+                 if (frame.x + frame.width > 100) frame.x = 100 - frame.width;
+             }
+          }
+       } else {
+          // Move from right page to left
+          const rightPage = next[pageIdx];
+          const leftPageIdx = pageIdx - 1;
+          if (leftPageIdx >= 0) {
+             const leftPage = next[leftPageIdx];
+             const frameIndex = rightPage.frames.findIndex((f: Frame) => f.id === frameId);
+             if (frameIndex !== -1) {
+                const [frame] = rightPage.frames.splice(frameIndex, 1);
+                frame.isSpread = true;
+                frame.width = 203;
+                frame.x = 0; 
+                frame.y = Math.max(0, frame.y);
+                // When moving to left, ensure it renders on top of existing left items
+                const maxZ = leftPage.frames.length > 0 ? Math.max(...leftPage.frames.map((f:any) => f.zIndex)) : 0;
+                frame.zIndex = maxZ + 1;
+                leftPage.frames.push(frame);
+             }
+          }
+       }
+       return next;
+    });
+    setActiveFrame(null);
+  }, [saveToHistory]);
+
   const onDropImage = useCallback((pageIdx: number, frameId: string | null, imageId: string, x?: number, y?: number) => {
     saveToHistory();
+    const image = images.find(i => i.id === imageId);
     if (frameId) {
-      onUpdateFrame(pageIdx, frameId, { imageId });
+      const targetPage = pageConfigs[pageIdx];
+      const targetFrame = targetPage.frames.find(f => f.id === frameId);
+      const updates: Partial<Frame> = { imageId };
+      if (targetFrame && !targetFrame.imageId && image) {
+         const imgRatio = image.aspectRatio || 1;
+         const pageRatio = currentRatio;
+         let newHeight = targetFrame.width * (pageRatio / imgRatio);
+         if (newHeight > 60) {
+             newHeight = 60;
+             const newWidth = newHeight * (imgRatio / pageRatio);
+             updates.width = newWidth;
+         }
+         updates.height = newHeight;
+         if (targetFrame.y + newHeight > 100) updates.y = Math.max(0, 100 - newHeight);
+      }
+      onUpdateFrame(pageIdx, frameId, updates);
       setActiveFrame({ pageIndex: pageIdx, frameId });
     } else {
       setPageConfigs(prev => {
         const next = [...prev];
         const page = { ...next[pageIdx] };
-        
         const maxZ = page.frames.length > 0 ? Math.max(...page.frames.map(f => f.zIndex)) : 0;
-        
+        const imgRatio = image ? (image.aspectRatio || 1) : 1;
+        const pageRatio = currentRatio;
+        let w = 35;
+        let h = w * (pageRatio / imgRatio);
+        if (h > 60) { h = 60; w = h * (imgRatio / pageRatio); }
+        const dropX = x !== undefined ? x : 50;
+        const dropY = y !== undefined ? y : 50;
         const newFrame: Frame = {
-          id: `f-${Math.random().toString(36).substr(2, 9)}`,
-          imageId: imageId,
-          x: x !== undefined ? x - 15 : 35,
-          y: y !== undefined ? y - 15 : 35,
-          width: 30,
-          height: 30,
-          zIndex: maxZ + 1,
-          cropType: 'fill',
-          scale: 1,
-          offset: { x: 50, y: 50 },
-          isLocked: true
+          id: `f-${Math.random().toString(36).substr(2, 9)}`, imageId: imageId,
+          x: Math.max(0, Math.min(100 - w, dropX - w/2)), y: Math.max(0, Math.min(100 - h, dropY - h/2)),
+          width: w, height: h, zIndex: maxZ + 1, cropType: 'fill', scale: 1, offset: { x: 50, y: 50 }, isLocked: true
         };
-        newFrame.x = Math.max(0, Math.min(70, newFrame.x));
-        newFrame.y = Math.max(0, Math.min(70, newFrame.y));
         page.frames = [...page.frames, newFrame];
         next[pageIdx] = page;
-        
         setActiveFrame({ pageIndex: pageIdx, frameId: newFrame.id });
-        
         return next;
       });
     }
-  }, [onUpdateFrame, saveToHistory]);
+  }, [onUpdateFrame, saveToHistory, images, currentRatio, pageConfigs]);
 
   const updatePageMargin = useCallback((index: number, margin: number) => {
     setPageConfigs(prev => {
@@ -739,50 +709,52 @@ const App: React.FC = () => {
     setExportDefaultName(settings.filename);
     const sanitizedFilename = settings.filename.trim() || 'project';
     
-    // Handle Real PDF Export
     if (settings.format === 'pdf') {
        setExportStatus('Initializing PDF Engine...');
        setExportProgress(5);
        await new Promise(r => setTimeout(r, 200));
 
-       // Determine page dimensions in inches
-       let pageWidth = 8;
-       let pageHeight = 8;
-       if (dimension === '8x8') { pageWidth=8; pageHeight=8; }
-       else if (dimension === '10x10') { pageWidth=10; pageHeight=10; }
-       else if (dimension === 'A4_Landscape') { pageWidth=11.69; pageHeight=8.27; }
-       else if (dimension === 'A4_Portrait') { pageWidth=8.27; pageHeight=11.69; }
-       else if (dimension === 'Custom') { pageHeight=10; pageWidth=10*currentRatio; }
+       let singlePageWidth = 10;
+       let singlePageHeight = 10;
+       
+       if (dimension === '1:1') { singlePageWidth=10; singlePageHeight=10; }
+       else if (dimension === '2:3') { singlePageWidth=8; singlePageHeight=12; }
+       else if (dimension === '3:2') { singlePageWidth=12; singlePageHeight=8; }
+       else if (dimension === '4:5') { singlePageWidth=8; singlePageHeight=10; }
+       else if (dimension === '5:4') { singlePageWidth=10; singlePageHeight=8; }
+       else if (dimension === 'A4_Landscape') { singlePageWidth=11.69; singlePageHeight=8.27; }
+       else if (dimension === 'A4_Portrait') { singlePageWidth=8.27; singlePageHeight=11.69; }
+       else if (dimension === 'Custom') { singlePageHeight=10; singlePageWidth=10*currentRatio; }
+
+       const spreadWidth = singlePageWidth * 2;
+       const spreadHeight = singlePageHeight;
 
        const doc = new jsPDF({
-           orientation: pageWidth > pageHeight ? 'landscape' : 'portrait',
+           orientation: spreadWidth > spreadHeight ? 'landscape' : 'portrait',
            unit: 'in',
-           format: [pageWidth, pageHeight]
+           format: [spreadWidth, spreadHeight]
        });
 
-       for (let i = 0; i < pageConfigs.length; i++) {
-           if (i > 0) doc.addPage([pageWidth, pageHeight]);
+       for (let i = 0; i < pageConfigs.length; i += 2) {
+           if (i > 0) doc.addPage([spreadWidth, spreadHeight]);
            
-           const page = pageConfigs[i];
-           setExportStatus(`Rendering Page ${i + 1} of ${pageConfigs.length}...`);
+           // Render Left Page
+           const leftPage = pageConfigs[i];
+           setExportStatus(`Rendering Spread ${Math.floor(i / 2) + 1} (Left Page)...`);
            setExportProgress(10 + ((i / pageConfigs.length) * 80));
            await new Promise(r => setTimeout(r, 50));
 
-           // Add frames
-           for (const frame of page.frames) {
+           for (const frame of leftPage.frames) {
                if (frame.imageId) {
                    const img = images.find(img => img.id === frame.imageId);
                    if (img) {
                        try {
                            const base64 = await getBase64FromUrl(img.url);
-                           const x = (frame.x / 100) * pageWidth;
-                           const y = (frame.y / 100) * pageHeight;
-                           const w = (frame.width / 100) * pageWidth;
-                           const h = (frame.height / 100) * pageHeight;
+                           const x = (frame.x / 100) * singlePageWidth;
+                           const y = (frame.y / 100) * singlePageHeight;
+                           const w = (frame.width / 100) * singlePageWidth;
+                           const h = (frame.height / 100) * singlePageHeight;
                            
-                           // Note: In a real advanced app we would handle crop/scale logic here by
-                           // clipping the image or drawing it to a temp canvas first.
-                           // For this implementation, we simply fit the image into the rect.
                            doc.addImage(base64, 'JPEG', x, y, w, h);
                        } catch (e) {
                            console.error('Failed to load image for PDF', e);
@@ -790,12 +762,36 @@ const App: React.FC = () => {
                    }
                }
            }
-       }
 
+           // Render Right Page (if exists)
+           if (i + 1 < pageConfigs.length) {
+               const rightPage = pageConfigs[i + 1];
+               setExportStatus(`Rendering Spread ${Math.floor(i / 2) + 1} (Right Page)...`);
+               await new Promise(r => setTimeout(r, 50));
+
+               for (const frame of rightPage.frames) {
+                   if (frame.imageId) {
+                       const img = images.find(img => img.id === frame.imageId);
+                       if (img) {
+                           try {
+                               const base64 = await getBase64FromUrl(img.url);
+                               const x = singlePageWidth + ((frame.x / 100) * singlePageWidth);
+                               const y = (frame.y / 100) * singlePageHeight;
+                               const w = (frame.width / 100) * singlePageWidth;
+                               const h = (frame.height / 100) * singlePageHeight;
+                               
+                               doc.addImage(base64, 'JPEG', x, y, w, h);
+                           } catch (e) {
+                               console.error('Failed to load image for PDF', e);
+                           }
+                       }
+                   }
+               }
+           }
+       }
        setExportStatus('Finalizing PDF File...');
        setExportProgress(100);
        doc.save(`${sanitizedFilename}.pdf`);
-       
        setTimeout(() => {
            setIsExporting(false);
            setShowExportModal(false);
@@ -830,29 +826,24 @@ const App: React.FC = () => {
         return;
     }
     
-    // Simulate complex export process for other formats
+    // Simulate other exports
     const totalPages = pageConfigs.length;
     const isComplex = settings.format === 'idml' || settings.format === 'psd';
-    
-    // Stage 1: Analyze Pages
     await new Promise(r => setTimeout(r, 600));
     setExportStatus('Analyzing Document Structure...');
     setExportProgress(15);
 
-    // Stage 2: Process High Res Assets (Simulation Loop)
     for(let i=0; i<totalPages; i++) {
         const percent = 15 + ((i+1) / totalPages) * 40;
         setExportStatus(`Rasterizing High-Res Assets for Page ${i+1}...`);
         setExportProgress(percent);
-        await new Promise(r => setTimeout(r, isComplex ? 300 : 100)); // Simulate processing time
+        await new Promise(r => setTimeout(r, isComplex ? 300 : 100));
     }
 
-    // Stage 3: Format Conversion
     setExportStatus(settings.format === 'idml' ? 'Generating XML Geometry...' : settings.format === 'psd' ? 'Flattening Layers...' : 'Applying Color Profile...');
     await new Promise(r => setTimeout(r, 800));
     setExportProgress(80);
 
-    // Stage 4: Packaging
     if (settings.colorProfile === 'cmyk') {
         setExportStatus('Converting to CMYK (SWOP 2006)...');
         await new Promise(r => setTimeout(r, 1000));
@@ -860,31 +851,11 @@ const App: React.FC = () => {
     setExportStatus('Finalizing Package...');
     setExportProgress(95);
     await new Promise(r => setTimeout(r, 600));
-
     setExportProgress(100);
 
-    const manifest = `
-PROJECT EXPORT MANIFEST
-=======================
-Filename: ${sanitizedFilename}
-Format: ${settings.format.toUpperCase()}
-Resolution: ${settings.dpi} DPI
-Bleed: ${settings.bleed ? 'Included' : 'None'}
-Crop Marks: ${settings.cropMarks ? 'Included' : 'None'}
-Color Profile: ${settings.colorProfile.toUpperCase()}
-Timestamp: ${new Date().toISOString()}
-
-PAGES EXPORTED: ${totalPages}
----------------------------
-${pageConfigs.map((p, i) => `Page ${i+1}: ${p.frames.length} frames`).join('\n')}
-
-NOTE: This is a browser-based simulation. 
-In a production environment, this would be a binary .${settings.format} file.
-To save your actual work logic, use the "Project Backup (JSON)" format.
-    `;
+    const manifest = `PROJECT EXPORT MANIFEST\nFilename: ${sanitizedFilename}\nFormat: ${settings.format.toUpperCase()}\nResolution: ${settings.dpi} DPI\nTimestamp: ${new Date().toISOString()}\nPages: ${totalPages}`;
     const fileContent = new Blob([manifest], { type: 'text/plain' });
     const extension = settings.format === 'idml' ? 'idml' : settings.format === 'psd' ? 'psd' : settings.format === 'affinity' ? 'afpub' : settings.format;
-
     const url = URL.createObjectURL(fileContent);
     const a = document.createElement('a');
     a.href = url;
@@ -894,7 +865,6 @@ To save your actual work logic, use the "Project Backup (JSON)" format.
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
-    // Reset UI
     setTimeout(() => {
         setIsExporting(false);
         setShowExportModal(false);
@@ -906,15 +876,8 @@ To save your actual work logic, use the "Project Backup (JSON)" format.
       const newImages = [...prev];
       const draggedIdx = newImages.findIndex(img => img.id === draggedId);
       if (draggedIdx === -1) return prev;
-      
-      // Adjusted logic: If we move an item from index 0 to index 5.
-      // We remove index 0. All items shift down. Old index 6 becomes new index 5.
-      // So if dragging from left to right, we need to account for the removal shift.
       let finalTargetIdx = targetIdx;
-      if (draggedIdx < targetIdx) {
-        finalTargetIdx--;
-      }
-
+      if (draggedIdx < targetIdx) finalTargetIdx--;
       const [removed] = newImages.splice(draggedIdx, 1);
       newImages.splice(finalTargetIdx, 0, removed);
       return newImages;
@@ -934,91 +897,99 @@ To save your actual work logic, use the "Project Backup (JSON)" format.
     return s;
   }, [pageConfigs]);
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files) {
-      const newPhotos: PhotoImage[] = (Array.from(files) as File[])
-        .filter(file => file.type.startsWith('image/'))
-        .map((file) => ({
-          id: Math.random().toString(36).substr(2, 9),
-          url: URL.createObjectURL(file),
-          name: file.name,
-          aspectRatio: 1
-        }));
+      const fileList = Array.from(files).filter((file) => (file as File).type.startsWith('image/')) as File[];
+      const newPhotos = await Promise.all(fileList.map(async (file) => {
+         const url = URL.createObjectURL(file);
+         const aspect = await new Promise<number>((resolve) => {
+            const img = new Image();
+            img.onload = () => resolve(img.width / img.height);
+            img.onerror = () => resolve(1);
+            img.src = url;
+         });
+         return {
+            id: Math.random().toString(36).substr(2, 9),
+            url,
+            name: file.name,
+            aspectRatio: aspect
+         };
+      }));
       setImages(prev => [...prev, ...newPhotos]);
     }
+    e.target.value = '';
   };
 
   const autoPopulate = () => {
-    // Only use selected images
     const selectedImages = images.filter(img => selectedLibraryImageIds.includes(img.id));
     if (selectedImages.length === 0) return;
-
     saveToHistory();
     setPageConfigs(prev => {
       const nextConfigs = JSON.parse(JSON.stringify(prev));
       let imageIndex = 0;
-
-      // 1. Fill existing empty frames first
       nextConfigs.forEach((page: PageConfig) => {
         page.frames.forEach((frame: Frame) => {
           if (!frame.imageId && imageIndex < selectedImages.length) {
-            frame.imageId = selectedImages[imageIndex].id;
+            const img = selectedImages[imageIndex];
+            frame.imageId = img.id;
+            const imgRatio = img.aspectRatio || 1;
+            const pageRatio = currentRatio;
+            let newH = frame.width * (pageRatio / imgRatio);
+            if (newH > 80) {
+                newH = 80;
+                frame.width = newH * (imgRatio / pageRatio);
+            }
+            frame.height = newH;
+            if (frame.y + frame.height > 100) {
+                frame.y = Math.max(0, 100 - frame.height);
+            }
             imageIndex++;
           }
         });
       });
-
-      // 2. Generate new spreads if we still have images
       while (imageIndex < selectedImages.length) {
-         // Create two new pages (a spread)
          const p1Id = `p${nextConfigs.length + 1}-${Date.now()}`;
          const p2Id = `p${nextConfigs.length + 2}-${Date.now()}`;
          const page1 = createInitialPageConfig(p1Id, globalBleedValue);
          const page2 = createInitialPageConfig(p2Id, globalBleedValue);
-         
-         // Fill page 1
          if (imageIndex < selectedImages.length) {
-             page1.frames[0].imageId = selectedImages[imageIndex].id;
+             const img = selectedImages[imageIndex];
+             page1.frames[0].imageId = img.id;
+             const imgRatio = img.aspectRatio || 1;
+             const pageRatio = currentRatio;
+             page1.frames[0].height = page1.frames[0].width * (pageRatio / imgRatio);
              imageIndex++;
          }
-         
-         // Fill page 2
          if (imageIndex < selectedImages.length) {
-             page2.frames[0].imageId = selectedImages[imageIndex].id;
+             const img = selectedImages[imageIndex];
+             page2.frames[0].imageId = img.id;
+             const imgRatio = img.aspectRatio || 1;
+             const pageRatio = currentRatio;
+             page2.frames[0].height = page2.frames[0].width * (pageRatio / imgRatio);
              imageIndex++;
          }
-         
          nextConfigs.push(page1, page2);
       }
       return nextConfigs;
     });
-
-    // Optional: Clear selection after placing
     setSelectedLibraryImageIds([]);
   };
 
   const handleLibraryItemClick = (id: string) => {
     setSelectedLibraryImageIds(prev => {
-      if (prev.includes(id)) {
-        return prev.filter(item => item !== id);
-      }
+      if (prev.includes(id)) return prev.filter(item => item !== id);
       return [...prev, id];
     });
   };
 
   const toggleSelectAll = () => {
-    if (selectedLibraryImageIds.length === images.length) {
-      setSelectedLibraryImageIds([]);
-    } else {
-      setSelectedLibraryImageIds(images.map(img => img.id));
-    }
+    if (selectedLibraryImageIds.length === images.length) setSelectedLibraryImageIds([]);
+    else setSelectedLibraryImageIds(images.map(img => img.id));
   };
 
   const handleVoidClick = (e: React.MouseEvent) => {
-    if (e.target === e.currentTarget) {
-      setActiveFrame(null);
-    }
+    if (e.target === e.currentTarget) setActiveFrame(null);
   };
 
   return (
@@ -1032,6 +1003,14 @@ To save your actual work logic, use the "Project Backup (JSON)" format.
           progress={exportProgress}
           statusText={exportStatus}
           defaultName={exportDefaultName}
+        />
+      )}
+
+      {showDimensionModal && (
+        <CustomDimensionModal 
+          onClose={cancelCustomDimensions}
+          onApply={applyCustomDimensions}
+          currentRatio={currentRatio}
         />
       )}
 
@@ -1076,7 +1055,7 @@ To save your actual work logic, use the "Project Backup (JSON)" format.
           <Tooltip text="Uniform margin for all pages">
             <div 
               className="flex items-center gap-3 bg-[#1a1a1a] border border-[#333] px-3 py-1 rounded-full"
-              onMouseUp={saveToHistory} // Save history when slider release
+              onMouseUp={saveToHistory} 
             >
                <svg className="w-3 h-3 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"/></svg>
                <input 
@@ -1113,7 +1092,7 @@ To save your actual work logic, use the "Project Backup (JSON)" format.
               </select>
               {dimension === 'Custom' && (
                 <button 
-                  onClick={promptForCustomDimension}
+                  onClick={() => setShowDimensionModal(true)}
                   className="w-4 h-4 flex items-center justify-center bg-blue-600/20 text-blue-400 hover:bg-blue-600 hover:text-white rounded transition-all"
                 >
                   <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
@@ -1205,52 +1184,62 @@ To save your actual work logic, use the "Project Backup (JSON)" format.
             className="py-24 px-12 flex flex-wrap justify-center gap-x-24 gap-y-48 min-h-full content-start"
             onMouseDown={handleVoidClick}
           >
-            {spreads.map((spread, sIdx) => (
-              <div key={sIdx} className="relative group shrink-0">
-                <div className="absolute -top-10 left-0 right-0 flex justify-between px-2 opacity-30 group-hover:opacity-100 transition-opacity">
-                   <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Spread {sIdx + 1}</span>
-                   <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Pages {spread.leftIdx + 1} & {spread.rightIdx !== null ? spread.rightIdx + 1 : ''}</span>
-                </div>
+            {spreads.map((spread, sIdx) => {
+              const leftPageHasSpread = pageConfigs[spread.leftIdx].frames.some(f => f.isSpread);
+              const rightFrames = spread.rightIdx !== null ? pageConfigs[spread.rightIdx].frames : [];
+              const leftFrames = pageConfigs[spread.leftIdx].frames;
+              
+              return (
+                <div key={sIdx} className="relative group shrink-0">
+                  <div className="absolute -top-10 left-0 right-0 flex justify-between px-2 opacity-30 group-hover:opacity-100 transition-opacity">
+                     <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Spread {sIdx + 1}</span>
+                     <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Pages {spread.leftIdx + 1} & {spread.rightIdx !== null ? spread.rightIdx + 1 : ''}</span>
+                  </div>
 
-                <div className="flex bg-white shadow-[0_30px_90px_-20px_rgba(0,0,0,0.8)] rounded-[1px] overflow-visible">
-                   <div className="relative group/page">
-                      <Page 
-                        pageIndex={spread.leftIdx} config={pageConfigs[spread.leftIdx]} 
-                        activeFrameId={activeFrame?.pageIndex === spread.leftIdx ? activeFrame.frameId : null}
-                        onSetActiveFrameId={(id) => setActiveFrame(id ? { pageIndex: spread.leftIdx, frameId: id } : null)}
-                        libraryImages={images} ratio={currentRatio} width={dynamicPageWidth}
-                        onDropImage={onDropImage} onUpdateFrame={onUpdateFrame} onDeleteFrame={onDeleteFrame} 
-                        onDuplicateFrame={onDuplicateFrame} onAddFrame={onAddFrame} onClearPage={onClearPage}
-                        onInteractionStart={saveToHistory}
-                      />
-                      <PageActionBar 
-                        index={spread.leftIdx} config={pageConfigs[spread.leftIdx]} 
-                        zoomLevel={zoomLevel} width={dynamicPageWidth}
-                        onAddFrame={onAddFrame} updatePageMargin={updatePageMargin}
-                      />
-                   </div>
-
-                   {spread.rightIdx !== null && (
-                     <div className="relative group/page">
+                  <div className="flex bg-white shadow-[0_30px_90px_-20px_rgba(0,0,0,0.8)] rounded-[1px] overflow-visible">
+                     <div className="relative group/page" style={{ zIndex: leftPageHasSpread ? 20 : 1 }}>
                         <Page 
-                          pageIndex={spread.rightIdx} config={pageConfigs[spread.rightIdx]} 
-                          activeFrameId={activeFrame?.pageIndex === spread.rightIdx ? activeFrame.frameId : null}
-                          onSetActiveFrameId={(id) => setActiveFrame(id ? { pageIndex: spread.rightIdx, frameId: id } : null)}
+                          pageIndex={spread.leftIdx} config={pageConfigs[spread.leftIdx]} 
+                          activeFrameId={activeFrame?.pageIndex === spread.leftIdx ? activeFrame.frameId : null}
+                          onSetActiveFrameId={(id) => setActiveFrame(id ? { pageIndex: spread.leftIdx, frameId: id } : null)}
                           libraryImages={images} ratio={currentRatio} width={dynamicPageWidth}
-                          isRightPage onDropImage={onDropImage} onUpdateFrame={onUpdateFrame} onDeleteFrame={onDeleteFrame} 
+                          onDropImage={onDropImage} onUpdateFrame={onUpdateFrame} onDeleteFrame={onDeleteFrame} 
                           onDuplicateFrame={onDuplicateFrame} onAddFrame={onAddFrame} onClearPage={onClearPage}
                           onInteractionStart={saveToHistory}
+                          onToggleSpread={onToggleSpread}
+                          neighborFrames={rightFrames}
                         />
                         <PageActionBar 
-                          index={spread.rightIdx} config={pageConfigs[spread.rightIdx]} 
+                          index={spread.leftIdx} config={pageConfigs[spread.leftIdx]} 
                           zoomLevel={zoomLevel} width={dynamicPageWidth}
                           onAddFrame={onAddFrame} updatePageMargin={updatePageMargin}
                         />
                      </div>
-                   )}
+
+                     {spread.rightIdx !== null && (
+                       <div className="relative group/page" style={{ zIndex: 1 }}>
+                          <Page 
+                            pageIndex={spread.rightIdx} config={pageConfigs[spread.rightIdx]} 
+                            activeFrameId={activeFrame?.pageIndex === spread.rightIdx ? activeFrame.frameId : null}
+                            onSetActiveFrameId={(id) => setActiveFrame(id ? { pageIndex: spread.rightIdx, frameId: id } : null)}
+                            libraryImages={images} ratio={currentRatio} width={dynamicPageWidth}
+                            isRightPage onDropImage={onDropImage} onUpdateFrame={onUpdateFrame} onDeleteFrame={onDeleteFrame} 
+                            onDuplicateFrame={onDuplicateFrame} onAddFrame={onAddFrame} onClearPage={onClearPage}
+                            onInteractionStart={saveToHistory}
+                            onToggleSpread={onToggleSpread}
+                            neighborFrames={leftFrames}
+                          />
+                          <PageActionBar 
+                            index={spread.rightIdx} config={pageConfigs[spread.rightIdx]} 
+                            zoomLevel={zoomLevel} width={dynamicPageWidth}
+                            onAddFrame={onAddFrame} updatePageMargin={updatePageMargin}
+                          />
+                       </div>
+                     )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
 
             <div className="w-full flex justify-center py-12">
               <Tooltip text="Insert two new blank pages">

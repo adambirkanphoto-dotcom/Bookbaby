@@ -1,7 +1,18 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { PageConfig, PhotoImage, ImageOffset, Frame } from '../types';
-import { Tooltip } from '../App';
+import { createPortal } from 'react-dom';
+import { PageConfig, PhotoImage, Frame } from '../types';
+import { Tooltip } from './Tooltip';
+
+const ASPECT_PRESETS = [
+  { label: 'Square (1:1)', ratio: 1 },
+  { label: 'Standard (4:3)', ratio: 4/3 },
+  { label: 'Standard (3:4)', ratio: 3/4 },
+  { label: 'Classic (3:2)', ratio: 3/2 },
+  { label: 'Classic (2:3)', ratio: 2/3 },
+  { label: 'Wide (16:9)', ratio: 16/9 },
+  { label: 'Portrait (9:16)', ratio: 9/16 },
+];
 
 interface PageProps {
   pageIndex: number;
@@ -19,20 +30,15 @@ interface PageProps {
   onAddFrame: (pageIndex: number, x?: number, y?: number) => void;
   onClearPage: (pageIndex: number) => void;
   onInteractionStart?: () => void;
+  onToggleSpread: (pageIndex: number, frameId: string) => void;
+  neighborFrames?: Frame[];
 }
 
 type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
+type SnapType = 'center' | 'edge' | 'spine';
 
-const SNAP_THRESHOLD = 1.5; // Percentage
-const FIXED_SNAP_POINTS = [0, 25, 50, 75, 100];
-
-const ASPECT_PRESETS = [
-  { label: 'Square (1:1)', ratio: 1 },
-  { label: '4 x 6 (3:2)', ratio: 1.5 },
-  { label: '6 x 4 (2:3)', ratio: 0.666 },
-  { label: '5 x 7 (1.4)', ratio: 1.4 },
-  { label: 'Cinematic (16:9)', ratio: 1.777 },
-];
+const SNAP_THRESHOLD = 1.25; // Tighter threshold for precision
+const FIXED_SNAP_POINTS = [0, 50, 100]; // Page edges and center
 
 export const Page: React.FC<PageProps> = ({ 
   pageIndex, 
@@ -49,17 +55,25 @@ export const Page: React.FC<PageProps> = ({
   onDuplicateFrame,
   onAddFrame,
   onClearPage,
-  onInteractionStart
+  onInteractionStart,
+  onToggleSpread,
+  neighborFrames = []
 }) => {
   const [draggingFrame, setDraggingFrame] = useState<string | null>(null);
   const [resizingFrame, setResizingFrame] = useState<{ id: string; handle: ResizeHandle } | null>(null);
-  const [snapLines, setSnapLines] = useState<{ x?: number[]; y?: number[] }>({});
+  
+  // Enhanced Snap State
+  const [activeGuides, setActiveGuides] = useState<{ x: { pos: number, type: SnapType }[], y: { pos: number, type: SnapType }[] }>({ x: [], y: [] });
+  
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, frameId: string } | null>(null);
   const [pageContextMenu, setPageContextMenu] = useState<{ x: number, y: number } | null>(null);
   const [customRatioValues, setCustomRatioValues] = useState({ w: 4, h: 3 });
   
   const containerRef = useRef<HTMLDivElement>(null);
   const dragStartRef = useRef<{ x: number, y: number, initialX: number, initialY: number, initialW: number, initialH: number, initialRatio: number } | null>(null);
+  
+  // Cache snap targets on drag start to improve performance
+  const cachedSnapTargets = useRef<{ x: number[], y: number[] }>({ x: [], y: [] });
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -87,9 +101,7 @@ export const Page: React.FC<PageProps> = ({
   };
 
   const handleBackgroundMouseDown = (e: React.MouseEvent) => {
-    // Only clear selection if left click
     if (e.button !== 0) return;
-    
     if (e.target === containerRef.current || (e.target as HTMLElement).classList.contains('page-bg-overlay')) {
       onSetActiveFrameId(null);
     }
@@ -115,8 +127,6 @@ export const Page: React.FC<PageProps> = ({
   const handlePageContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
     if (draggingFrame || resizingFrame) return;
-
-    // Ensure we are clicking on the page background
     const rect = containerRef.current?.getBoundingClientRect();
     if (rect) {
        setPageContextMenu({ x: e.clientX, y: e.clientY });
@@ -131,13 +141,20 @@ export const Page: React.FC<PageProps> = ({
     let newWidth = frame.width;
     let newHeight = (newWidth * ratio) / targetVisualRatio;
 
-    if (frame.y + newHeight > 100) {
-      newHeight = 100 - frame.y;
-      newWidth = (newHeight * targetVisualRatio) / ratio;
-    }
-    if (frame.x + newWidth > 100) {
-      newWidth = 100 - frame.x;
-      newHeight = (newWidth * ratio) / targetVisualRatio;
+    if (isRightPage) {
+        if (frame.y + newHeight > 100) {
+          newHeight = 100 - frame.y;
+          newWidth = (newHeight * targetVisualRatio) / ratio;
+        }
+        if (frame.x + newWidth > 100) {
+          newWidth = 100 - frame.x;
+          newHeight = (newWidth * ratio) / targetVisualRatio;
+        }
+    } else {
+        if (frame.y + newHeight > 100) {
+          newHeight = 100 - frame.y;
+          newWidth = (newHeight * targetVisualRatio) / ratio;
+        }
     }
 
     onUpdateFrame(pageIndex, frameId, { 
@@ -146,14 +163,12 @@ export const Page: React.FC<PageProps> = ({
       isLocked: true 
     });
     setContextMenu(null);
-  }, [config.frames, ratio, pageIndex, onUpdateFrame]);
+  }, [config.frames, ratio, pageIndex, onUpdateFrame, isRightPage]);
 
   useEffect(() => {
     const closeMenu = (e: MouseEvent) => {
-        // Prevent closing if clicking inside the context menu (specifically inputs)
         const target = e.target as HTMLElement;
         if (target.closest('.context-menu-prevent-close')) return;
-        
         setContextMenu(null);
         setPageContextMenu(null);
     };
@@ -161,14 +176,81 @@ export const Page: React.FC<PageProps> = ({
     return () => window.removeEventListener('mousedown', closeMenu);
   }, []);
 
+  // --- Snapping Logic ---
+
+  const calculateSnapTargets = (activeId: string) => {
+    const xPoints = new Set(FIXED_SNAP_POINTS);
+    const yPoints = new Set(FIXED_SNAP_POINTS);
+
+    // Current page frames
+    config.frames.forEach(f => {
+      if (f.id === activeId) return;
+      xPoints.add(f.x);
+      xPoints.add(f.x + f.width);
+      xPoints.add(f.x + f.width / 2);
+      yPoints.add(f.y);
+      yPoints.add(f.y + f.height);
+      yPoints.add(f.y + f.height / 2);
+    });
+
+    // Neighbor frames (offset logic for spreads)
+    // Left Page items see Right page items at +100 offset
+    // Right Page items see Left page items at -100 offset
+    const offset = isRightPage ? -100 : 100;
+    neighborFrames.forEach(f => {
+       xPoints.add(f.x + offset);
+       xPoints.add(f.x + f.width + offset);
+       // Add neighbor center too
+       xPoints.add(f.x + f.width / 2 + offset);
+    });
+
+    return { x: Array.from(xPoints), y: Array.from(yPoints) };
+  };
+
+  const getSnappedPosition = (current: number, width: number, targets: number[]) => {
+    // Check Left, Center, Right edges
+    const edges = [
+      { val: current, offset: 0 },         // Left Edge
+      { val: current + width / 2, offset: width / 2 }, // Center
+      { val: current + width, offset: width } // Right Edge
+    ];
+
+    let bestSnap = current;
+    let minDelta = SNAP_THRESHOLD;
+    let snapType: SnapType | null = null;
+    let guidePos: number | null = null;
+
+    edges.forEach(edge => {
+      for (const target of targets) {
+        const delta = Math.abs(edge.val - target);
+        if (delta < minDelta) {
+          minDelta = delta;
+          bestSnap = target - edge.offset;
+          guidePos = target;
+          
+          // Determine snap type for visuals
+          if (target === 100 && !isRightPage) snapType = 'spine';
+          else if (target === 0 && isRightPage) snapType = 'spine';
+          else if (target === 50 || edge.offset === width / 2) snapType = 'center';
+          else snapType = 'edge';
+        }
+      }
+    });
+
+    return { 
+      snapped: bestSnap, 
+      guide: guidePos !== null && snapType ? { pos: guidePos, type: snapType } : null 
+    };
+  };
+
   const startDragging = (e: React.MouseEvent, frame: Frame) => {
-    if (resizingFrame) return;
-    if (e.button === 2) return; // Prevent normal drag on right click
-    
+    if (resizingFrame || e.button === 2) return;
     e.preventDefault();
     e.stopPropagation();
-    
     if (onInteractionStart) onInteractionStart();
+    
+    // Pre-calculate snap targets
+    cachedSnapTargets.current = calculateSnapTargets(frame.id);
     
     setDraggingFrame(frame.id);
     onSetActiveFrameId(frame.id);
@@ -186,8 +268,9 @@ export const Page: React.FC<PageProps> = ({
   const startResizing = (e: React.MouseEvent, frame: Frame, handle: ResizeHandle) => {
     e.preventDefault();
     e.stopPropagation();
-    
     if (onInteractionStart) onInteractionStart();
+
+    cachedSnapTargets.current = calculateSnapTargets(frame.id);
 
     setResizingFrame({ id: frame.id, handle });
     onSetActiveFrameId(frame.id);
@@ -202,166 +285,166 @@ export const Page: React.FC<PageProps> = ({
     };
   };
 
-  const getSnapTargetPoints = (activeId: string) => {
-    const xPoints = new Set(FIXED_SNAP_POINTS);
-    const yPoints = new Set(FIXED_SNAP_POINTS);
-
-    config.frames.forEach(f => {
-      if (f.id === activeId) return;
-      xPoints.add(f.x);
-      xPoints.add(f.x + f.width);
-      xPoints.add(f.x + f.width / 2);
-      yPoints.add(f.y);
-      yPoints.add(f.y + f.height);
-      yPoints.add(f.y + f.height / 2);
-    });
-
-    return { x: Array.from(xPoints), y: Array.from(yPoints) };
-  };
-
-  const findBestSnap = (val: number, targets: number[]) => {
-    for (const target of targets) {
-      if (Math.abs(val - target) < SNAP_THRESHOLD) return { snapped: target, isSnapped: true };
-    }
-    return { snapped: val, isSnapped: false };
-  };
-
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!containerRef.current || !dragStartRef.current) return;
       const rect = containerRef.current.getBoundingClientRect();
+      const dx = ((e.clientX - dragStartRef.current.x) / rect.width) * 100;
+      const dy = ((e.clientY - dragStartRef.current.y) / rect.height) * 100;
 
-      if (draggingFrame && dragStartRef.current) {
-        const dx = ((e.clientX - dragStartRef.current.x) / rect.width) * 100;
-        const dy = ((e.clientY - dragStartRef.current.y) / rect.height) * 100;
-        const activeId = draggingFrame;
-        const targets = getSnapTargetPoints(activeId);
+      // --- DRAGGING LOGIC ---
+      if (draggingFrame) {
+        const { initialX, initialY, initialW, initialH } = dragStartRef.current;
+        let rawX = initialX + dx;
+        let rawY = initialY + dy;
 
-        let newX = dragStartRef.current.initialX + dx;
-        let newY = dragStartRef.current.initialY + dy;
-        const w = dragStartRef.current.initialW;
-        const h = dragStartRef.current.initialH;
+        // Apply Snapping
+        const snapX = getSnappedPosition(rawX, initialW, cachedSnapTargets.current.x);
+        const snapY = getSnappedPosition(rawY, initialH, cachedSnapTargets.current.y);
 
-        const snapX = findBestSnap(newX, targets.x);
-        const snapRight = findBestSnap(newX + w, targets.x);
-        const snapCenterX = findBestSnap(newX + w / 2, targets.x);
-        const snapY = findBestSnap(newY, targets.y);
-        const snapBottom = findBestSnap(newY + h, targets.y);
-        const snapCenterY = findBestSnap(newY + h / 2, targets.y);
+        let finalX = snapX.snapped;
+        let finalY = snapY.snapped;
 
-        const activeSnapX: number[] = [];
-        const activeSnapY: number[] = [];
+        // Visual Boundary Clamping (Soft Limits)
+        // Allow spread on Left Page (dragging right > 100%)
+        // Right Page is stricter (0-100)
+        if (isRightPage) {
+           finalX = Math.max(0, Math.min(100 - initialW, finalX));
+        } else {
+           // Left page can go negative slightly (bleed) or positive (spread)
+           finalX = Math.max(-5, Math.min(205 - initialW, finalX));
+        }
+        finalY = Math.max(0, Math.min(100 - initialH, finalY));
 
-        if (snapX.isSnapped) { newX = snapX.snapped; activeSnapX.push(snapX.snapped); }
-        else if (snapRight.isSnapped) { newX = snapRight.snapped - w; activeSnapX.push(snapRight.snapped); }
-        else if (snapCenterX.isSnapped) { newX = snapCenterX.snapped - w / 2; activeSnapX.push(snapCenterX.snapped); }
-
-        if (snapY.isSnapped) { newY = snapY.snapped; activeSnapY.push(snapY.snapped); }
-        else if (snapBottom.isSnapped) { newY = snapBottom.snapped - h; activeSnapY.push(snapBottom.snapped); }
-        else if (snapCenterY.isSnapped) { newY = snapCenterY.snapped - h / 2; activeSnapY.push(snapCenterY.snapped); }
-
-        newX = Math.max(0, Math.min(100 - w, newX));
-        newY = Math.max(0, Math.min(100 - h, newY));
-
-        setSnapLines({ x: activeSnapX.length ? activeSnapX : undefined, y: activeSnapY.length ? activeSnapY : undefined });
-        onUpdateFrame(pageIndex, draggingFrame, { x: newX, y: newY });
+        setActiveGuides({ 
+            x: snapX.guide ? [snapX.guide] : [], 
+            y: snapY.guide ? [snapY.guide] : [] 
+        });
+        
+        onUpdateFrame(pageIndex, draggingFrame, { x: finalX, y: finalY });
       }
 
-      if (resizingFrame && dragStartRef.current) {
-        const dx = ((e.clientX - dragStartRef.current.x) / rect.width) * 100;
-        const dy = ((e.clientY - dragStartRef.current.y) / rect.height) * 100;
+      // --- RESIZING LOGIC ---
+      if (resizingFrame) {
+        const { initialX, initialY, initialW, initialH, initialRatio } = dragStartRef.current;
+        const { handle } = resizingFrame;
         const frame = config.frames.find(f => f.id === resizingFrame.id);
         if (!frame) return;
 
-        const targets = getSnapTargetPoints(resizingFrame.id);
-        let { initialX: x, initialY: y, initialW: w, initialH: h, initialRatio: ar } = dragStartRef.current;
-        const { handle } = resizingFrame;
-        const activeSnapX: number[] = [];
-        const activeSnapY: number[] = [];
+        let newX = initialX;
+        let newY = initialY;
+        let newW = initialW;
+        let newH = initialH;
 
-        if (handle.includes('e')) w += dx;
-        if (handle.includes('w')) { x += dx; w -= dx; }
-        if (handle.includes('s')) h += dy;
-        if (handle.includes('n')) { y += dy; h -= dy; }
+        // 1. Calculate Raw Dimensions based on handle
+        if (handle.includes('e')) newW = initialW + dx;
+        if (handle.includes('w')) { newX = initialX + dx; newW = initialW - dx; }
+        if (handle.includes('s')) newH = initialH + dy;
+        if (handle.includes('n')) { newY = initialY + dy; newH = initialH - dy; }
 
-        if (handle.includes('e')) {
-            const snap = findBestSnap(x + w, targets.x);
-            if (snap.isSnapped) { w = snap.snapped - x; activeSnapX.push(snap.snapped); }
-        } else if (handle.includes('w')) {
-            const snap = findBestSnap(x, targets.x);
-            if (snap.isSnapped) { const oldRight = x + w; x = snap.snapped; w = oldRight - x; activeSnapX.push(snap.snapped); }
+        // 2. Snap the active edges
+        const guidesX: { pos: number, type: SnapType }[] = [];
+        const guidesY: { pos: number, type: SnapType }[] = [];
+
+        // X-Axis Snapping
+        if (handle.includes('e') || handle.includes('w')) {
+            // What edge are we moving?
+            const movingLeft = handle.includes('w');
+            const targetEdge = movingLeft ? newX : (newX + newW);
+            
+            // Find closest snap for this specific edge
+            let bestSnap = targetEdge;
+            let minDelta = SNAP_THRESHOLD;
+            let snapType: SnapType | null = null;
+            
+            cachedSnapTargets.current.x.forEach(target => {
+                const d = Math.abs(target - targetEdge);
+                if (d < minDelta) {
+                    minDelta = d;
+                    bestSnap = target;
+                    snapType = (target === 50) ? 'center' : (target === 100 || target === 0) ? 'spine' : 'edge';
+                }
+            });
+
+            if (snapType) {
+                if (movingLeft) {
+                    const diff = bestSnap - newX;
+                    newX = bestSnap;
+                    newW -= diff;
+                } else {
+                    newW = bestSnap - newX;
+                }
+                guidesX.push({ pos: bestSnap, type: snapType });
+            }
         }
-        if (handle.includes('s')) {
-            const snap = findBestSnap(y + h, targets.y);
-            if (snap.isSnapped) { h = snap.snapped - y; activeSnapY.push(snap.snapped); }
-        } else if (handle.includes('n')) {
-            const snap = findBestSnap(y, targets.y);
-            if (snap.isSnapped) { const oldBottom = y + h; y = snap.snapped; h = oldBottom - y; activeSnapY.push(snap.snapped); }
+
+        // Y-Axis Snapping (Similar logic)
+        if (handle.includes('n') || handle.includes('s')) {
+            const movingTop = handle.includes('n');
+            const targetEdge = movingTop ? newY : (newY + newH);
+            let bestSnap = targetEdge;
+            let minDelta = SNAP_THRESHOLD;
+            let snapType: SnapType | null = null;
+
+            cachedSnapTargets.current.y.forEach(target => {
+                const d = Math.abs(target - targetEdge);
+                if (d < minDelta) {
+                    minDelta = d;
+                    bestSnap = target;
+                    snapType = (target === 50) ? 'center' : 'edge';
+                }
+            });
+
+            if (snapType) {
+                if (movingTop) {
+                    const diff = bestSnap - newY;
+                    newY = bestSnap;
+                    newH -= diff;
+                } else {
+                    newH = bestSnap - newY;
+                }
+                guidesY.push({ pos: bestSnap, type: snapType });
+            }
         }
 
+        // 3. Aspect Ratio & Constraints
         if (frame.isLocked) {
-           const useWidthAsMaster = handle === 'e' || handle === 'w' || (handle.includes('e') && Math.abs(dx) > Math.abs(dy)) || (handle.includes('w') && Math.abs(dx) > Math.abs(dy));
-           
-           if (useWidthAsMaster) {
-              h = w / ar;
-              if (handle.includes('n')) y = (dragStartRef.current.initialY + dragStartRef.current.initialH) - h;
-           } else {
-              w = h * ar;
-              if (handle.includes('w')) x = (dragStartRef.current.initialX + dragStartRef.current.initialW) - w;
-           }
-
-           // Robust boundary clamping that preserves aspect ratio
-           // Clamp Left
-           if (x < 0) {
-             const diff = -x;
-             x = 0;
-             w = (dragStartRef.current.initialX + dragStartRef.current.initialW);
-             h = w / ar;
-             if (handle.includes('n')) y = (dragStartRef.current.initialY + dragStartRef.current.initialH) - h;
-           }
-           // Clamp Top
-           if (y < 0) {
-             const diff = -y;
-             y = 0;
-             h = (dragStartRef.current.initialY + dragStartRef.current.initialH);
-             w = h * ar;
-             if (handle.includes('w')) x = (dragStartRef.current.initialX + dragStartRef.current.initialW) - w;
-           }
-           // Clamp Right
-           if (x + w > 100) {
-             w = 100 - x;
-             h = w / ar;
-             if (handle.includes('n')) y = (dragStartRef.current.initialY + dragStartRef.current.initialH) - h;
-           }
-           // Clamp Bottom
-           if (y + h > 100) {
-             h = 100 - y;
-             w = h * ar;
-             if (handle.includes('w')) x = (dragStartRef.current.initialX + dragStartRef.current.initialW) - w;
-           }
-           
-           // Double check for tiny sizes if clamped too far
-           if (w < 5) { w = 5; h = w / ar; }
-           if (h < 5) { h = 5; w = h * ar; }
-
-        } else {
-            if (w < 5) w = 5;
-            if (h < 5) h = 5;
-            if (x < 0) x = 0;
-            if (y < 0) y = 0;
-            if (x + w > 100) w = 100 - x;
-            if (y + h > 100) h = 100 - y;
+             // If we snapped one dimension, force the other to match ratio
+             // This is complex because snapping X might violate snapping Y or aspect ratio
+             // For simplicity/robustness: Width dominates, adjust Height
+             const useWidth = (handle.includes('e') || handle.includes('w'));
+             if (useWidth) {
+                 newH = newW / initialRatio;
+                 if (handle.includes('n')) newY = (initialY + initialH) - newH;
+             } else {
+                 newW = newH * initialRatio;
+                 if (handle.includes('w')) newX = (initialX + initialW) - newW;
+             }
         }
 
-        setSnapLines({ x: activeSnapX.length ? activeSnapX : undefined, y: activeSnapY.length ? activeSnapY : undefined });
-        onUpdateFrame(pageIndex, resizingFrame.id, { x, y, width: w, height: h });
+        // 4. Min Size & Safe Bounds
+        if (newW < 2) newW = 2;
+        if (newH < 2) newH = 2;
+        
+        // Clamp visually
+        const maxRight = isRightPage ? 100 : 205;
+        if (newX < (isRightPage ? 0 : -5)) { 
+            // Prevent dragging left past bleed
+             if (!handle.includes('e')) { // if moving left handle
+                 const diff = (isRightPage ? 0 : -5) - newX;
+                 newX += diff; newW -= diff; 
+             }
+        }
+        
+        setActiveGuides({ x: guidesX, y: guidesY });
+        onUpdateFrame(pageIndex, resizingFrame.id, { x: newX, y: newY, width: newW, height: newH });
       }
     };
 
     const handleMouseUp = () => {
       setDraggingFrame(null);
       setResizingFrame(null);
-      setSnapLines({});
+      setActiveGuides({ x: [], y: [] });
       dragStartRef.current = null;
     };
 
@@ -373,9 +456,10 @@ export const Page: React.FC<PageProps> = ({
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [draggingFrame, resizingFrame, pageIndex, onUpdateFrame, config.frames, ratio]);
+  }, [draggingFrame, resizingFrame, pageIndex, onUpdateFrame, config.frames, ratio, isRightPage]);
 
   const paddingValue = (config.margin / 16) * width;
+  const allowOverflow = !isRightPage && config.frames.some(f => f.width > 100 || f.isSpread);
 
   return (
     <div 
@@ -385,27 +469,33 @@ export const Page: React.FC<PageProps> = ({
       onDoubleClick={handleDoubleClick}
       onMouseDown={handleBackgroundMouseDown}
       onContextMenu={handlePageContextMenu}
-      className={`bg-white relative overflow-hidden flex flex-col ${isRightPage ? 'border-l border-slate-300' : ''}`}
+      className={`bg-white relative flex flex-col ${allowOverflow ? 'overflow-visible z-20' : 'overflow-hidden z-10'} ${isRightPage ? 'border-l border-slate-300' : ''}`}
       style={{ width: `${width}px`, height: `${width / (ratio || 1)}px` }}
     >
-      {/* Frame Context Menu */}
-      {contextMenu && (
+      {/* Context Menu using Portal */}
+      {contextMenu && createPortal(
         <div 
-          className="fixed z-[100] bg-[#1a1a1a] border border-[#333] rounded-lg shadow-2xl py-1 min-w-[180px] overflow-hidden context-menu-prevent-close"
+          className="fixed z-[9999] bg-[#1a1a1a] border border-[#333] rounded-lg shadow-2xl py-1 min-w-[180px] overflow-hidden context-menu-prevent-close"
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
         >
           <div className="px-3 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-widest border-b border-[#333] mb-1">Frame Options</div>
           
           <button 
             className="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider hover:bg-slate-800 transition-colors flex items-center gap-2"
-            onClick={() => {
-              onDuplicateFrame(pageIndex, contextMenu.frameId);
-              setContextMenu(null);
-            }}
+            onClick={() => { onDuplicateFrame(pageIndex, contextMenu.frameId); setContextMenu(null); }}
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"/></svg>
             Duplicate Frame
+          </button>
+
+          <button 
+            className="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider hover:bg-slate-800 transition-colors flex items-center gap-2"
+            onClick={() => { onToggleSpread(pageIndex, contextMenu.frameId); setContextMenu(null); }}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"/></svg>
+            {config.frames.find(f => f.id === contextMenu.frameId)?.isSpread ? 'Contract to Page' : 'Make Full Spread'}
           </button>
 
           <button 
@@ -431,75 +521,39 @@ export const Page: React.FC<PageProps> = ({
               <span className="text-[8px] text-slate-500 font-normal">{p.ratio.toFixed(2)}</span>
             </button>
           ))}
-
-          {/* Custom Aspect Ratio Inputs */}
-          <div className="px-4 py-2 border-t border-[#333]">
+          
+           <div className="px-4 py-2 border-t border-[#333]">
              <div className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Custom Ratio</div>
              <div className="flex items-center gap-1.5">
-               {/* Width Input */}
                <div className="flex-1 flex bg-[#0d0d0d] border border-[#333] rounded overflow-hidden h-7">
                   <input 
-                    type="number"
-                    min="0.1" 
-                    step="0.5"
-                    value={customRatioValues.w}
-                    onChange={(e) => {
-                        const val = parseFloat(e.target.value);
-                        if(!isNaN(val)) setCustomRatioValues(prev => ({...prev, w: val}));
-                    }}
+                    type="number" min="0.1" step="0.5" value={customRatioValues.w}
+                    onChange={(e) => { const val = parseFloat(e.target.value); if(!isNaN(val)) setCustomRatioValues(prev => ({...prev, w: val})); }}
                     className="w-full h-full bg-transparent text-white text-[10px] font-bold text-center outline-none border-none p-0 appearance-none"
                   />
                   <div className="flex flex-col border-l border-[#333] shrink-0 w-4">
-                     <button onClick={() => setCustomRatioValues(p => ({...p, w: (Number(p.w)||0) + 0.5}))} className="h-1/2 flex items-center justify-center hover:bg-[#222] text-slate-400 transition-colors">
-                       <svg className="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 15l7-7 7 7"/></svg>
-                     </button>
-                     <button onClick={() => setCustomRatioValues(p => ({...p, w: Math.max(0.1, (Number(p.w)||0) - 0.5)}))} className="h-1/2 flex items-center justify-center hover:bg-[#222] text-slate-400 border-t border-[#333] transition-colors">
-                       <svg className="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M19 9l-7 7-7-7"/></svg>
-                     </button>
+                     <button onClick={() => setCustomRatioValues(p => ({...p, w: (Number(p.w)||0) + 0.5}))} className="h-1/2 flex items-center justify-center hover:bg-[#222] text-slate-400 transition-colors"><svg className="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 15l7-7 7 7"/></svg></button>
+                     <button onClick={() => setCustomRatioValues(p => ({...p, w: Math.max(0.1, (Number(p.w)||0) - 0.5)}))} className="h-1/2 flex items-center justify-center hover:bg-[#222] text-slate-400 border-t border-[#333] transition-colors"><svg className="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M19 9l-7 7-7-7"/></svg></button>
                   </div>
                </div>
-
                <span className="text-[10px] text-slate-600 font-bold">:</span>
-
-               {/* Height Input */}
                <div className="flex-1 flex bg-[#0d0d0d] border border-[#333] rounded overflow-hidden h-7">
                   <input 
-                    type="number" 
-                    min="0.1"
-                    step="0.5"
-                    value={customRatioValues.h}
-                    onChange={(e) => {
-                        const val = parseFloat(e.target.value);
-                        if(!isNaN(val)) setCustomRatioValues(prev => ({...prev, h: val}));
-                    }}
+                    type="number" min="0.1" step="0.5" value={customRatioValues.h}
+                    onChange={(e) => { const val = parseFloat(e.target.value); if(!isNaN(val)) setCustomRatioValues(prev => ({...prev, h: val})); }}
                     className="w-full h-full bg-transparent text-white text-[10px] font-bold text-center outline-none border-none p-0 appearance-none"
                   />
                   <div className="flex flex-col border-l border-[#333] shrink-0 w-4">
-                     <button onClick={() => setCustomRatioValues(p => ({...p, h: (Number(p.h)||0) + 0.5}))} className="h-1/2 flex items-center justify-center hover:bg-[#222] text-slate-400 transition-colors">
-                        <svg className="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 15l7-7 7 7"/></svg>
-                     </button>
-                     <button onClick={() => setCustomRatioValues(p => ({...p, h: Math.max(0.1, (Number(p.h)||0) - 0.5)}))} className="h-1/2 flex items-center justify-center hover:bg-[#222] text-slate-400 border-t border-[#333] transition-colors">
-                        <svg className="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M19 9l-7 7-7-7"/></svg>
-                     </button>
+                     <button onClick={() => setCustomRatioValues(p => ({...p, h: (Number(p.h)||0) + 0.5}))} className="h-1/2 flex items-center justify-center hover:bg-[#222] text-slate-400 transition-colors"><svg className="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 15l7-7 7 7"/></svg></button>
+                     <button onClick={() => setCustomRatioValues(p => ({...p, h: Math.max(0.1, (Number(p.h)||0) - 0.5)}))} className="h-1/2 flex items-center justify-center hover:bg-[#222] text-slate-400 border-t border-[#333] transition-colors"><svg className="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M19 9l-7 7-7-7"/></svg></button>
                   </div>
                </div>
-
-               <button 
-                 onClick={() => {
-                    if(customRatioValues.w > 0 && customRatioValues.h > 0) {
-                       applyAspectRatio(contextMenu.frameId, customRatioValues.w / customRatioValues.h);
-                    }
-                 }}
-                 className="w-7 h-7 flex items-center justify-center bg-blue-600 hover:bg-blue-500 text-white rounded shadow-lg ml-1 shrink-0"
-               >
-                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"/></svg>
-               </button>
+               <button onClick={() => { if(customRatioValues.w > 0 && customRatioValues.h > 0) applyAspectRatio(contextMenu.frameId, customRatioValues.w / customRatioValues.h); }} className="w-7 h-7 flex items-center justify-center bg-blue-600 hover:bg-blue-500 text-white rounded shadow-lg ml-1 shrink-0"><svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"/></svg></button>
              </div>
           </div>
 
           <div className="h-px bg-[#333] my-1" />
 
-          {/* NEW: Remove Photo Button */}
           {config.frames.find(f => f.id === contextMenu.frameId)?.imageId && (
              <button 
                className="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-300 hover:bg-slate-800 transition-colors flex items-center gap-2"
@@ -522,56 +576,29 @@ export const Page: React.FC<PageProps> = ({
           >
             Delete Frame
           </button>
-        </div>
+        </div>,
+        document.body
       )}
 
-      {/* Page Context Menu */}
-      {pageContextMenu && (
+      {/* Improved Snap Guidelines */}
+      {activeGuides.x.map((guide, i) => (
         <div 
-          className="fixed z-[100] bg-[#1a1a1a] border border-[#333] rounded-lg shadow-2xl py-1 min-w-[160px] overflow-hidden"
-          style={{ top: pageContextMenu.y, left: pageContextMenu.x }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="px-3 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-widest border-b border-[#333] mb-1">Page Options</div>
-          
-          <button 
-            className="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider hover:bg-slate-800 transition-colors flex items-center gap-2"
-            onClick={() => {
-                if (containerRef.current) {
-                    const rect = containerRef.current.getBoundingClientRect();
-                    const relX = ((pageContextMenu.x - rect.left) / rect.width) * 100;
-                    const relY = ((pageContextMenu.y - rect.top) / rect.height) * 100;
-                    onAddFrame(pageIndex, relX, relY);
-                } else {
-                    onAddFrame(pageIndex);
-                }
-                setPageContextMenu(null);
-            }}
-          >
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4"/></svg>
-            Add Frame Here
-          </button>
-           
-           <div className="h-px bg-[#333] my-1" />
-           
-           <button 
-             className="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-red-500 hover:bg-red-600 hover:text-white transition-colors"
-             onClick={() => {
-                 onClearPage(pageIndex);
-                 setPageContextMenu(null);
-             }}
-           >
-             Clear All Frames
-           </button>
-        </div>
-      )}
-
-      {/* Snap Guides */}
-      {snapLines.x?.map(lx => (
-        <div key={`x-${lx}`} className="absolute top-0 bottom-0 w-px bg-blue-500/50 z-[60] pointer-events-none" style={{ left: `${lx}%` }} />
+            key={`gx-${i}`} 
+            className={`absolute top-0 bottom-0 w-px z-[60] pointer-events-none transition-opacity duration-200 ${
+                guide.type === 'spine' ? 'bg-fuchsia-500 shadow-[0_0_8px_rgba(217,70,239,0.8)]' : 
+                guide.type === 'center' ? 'bg-cyan-400' : 'bg-blue-500/50 dashed-line'
+            }`} 
+            style={{ left: `${guide.pos}%` }} 
+        />
       ))}
-      {snapLines.y?.map(ly => (
-        <div key={`y-${ly}`} className="absolute left-0 right-0 h-px bg-blue-500/50 z-[60] pointer-events-none" style={{ top: `${ly}%` }} />
+      {activeGuides.y.map((guide, i) => (
+        <div 
+            key={`gy-${i}`} 
+            className={`absolute left-0 right-0 h-px z-[60] pointer-events-none transition-opacity duration-200 ${
+                guide.type === 'center' ? 'bg-cyan-400' : 'bg-blue-500/50 dashed-line'
+            }`} 
+            style={{ top: `${guide.pos}%` }} 
+        />
       ))}
 
       <div className="absolute inset-0 page-bg-overlay" style={{ padding: `${paddingValue}px` }}>

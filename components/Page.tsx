@@ -1,18 +1,16 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { PageConfig, PhotoImage, Frame } from '../types';
+import { PageConfig, PhotoImage, Frame, SpreadDimension } from '../types';
 import { Tooltip } from './Tooltip';
+import { DIMENSION_LABELS, DIMENSION_RATIOS } from '../constants';
 
-const ASPECT_PRESETS = [
-  { label: 'Square (1:1)', ratio: 1 },
-  { label: 'Standard (4:3)', ratio: 4/3 },
-  { label: 'Standard (3:4)', ratio: 3/4 },
-  { label: 'Classic (3:2)', ratio: 3/2 },
-  { label: 'Classic (2:3)', ratio: 2/3 },
-  { label: 'Wide (16:9)', ratio: 16/9 },
-  { label: 'Portrait (9:16)', ratio: 9/16 },
-];
+const ASPECT_PRESETS = (Object.keys(DIMENSION_RATIOS) as SpreadDimension[])
+  .filter(k => k !== 'Custom')
+  .map(k => ({
+    label: DIMENSION_LABELS[k],
+    ratio: DIMENSION_RATIOS[k]
+  }));
 
 interface PageProps {
   pageIndex: number;
@@ -50,14 +48,14 @@ export const Page: React.FC<PageProps> = ({
   width = 450, 
   isRightPage, 
   onDropImage, 
-  onUpdateFrame,
-  onDeleteFrame,
-  onDuplicateFrame,
-  onAddFrame,
-  onClearPage,
-  onInteractionStart,
-  onToggleSpread,
-  neighborFrames = [],
+  onUpdateFrame, 
+  onDeleteFrame, 
+  onDuplicateFrame, 
+  onAddFrame, 
+  onClearPage, 
+  onInteractionStart, 
+  onToggleSpread, 
+  neighborFrames = [], 
   onContextMenuOpen
 }) => {
   const [draggingFrame, setDraggingFrame] = useState<string | null>(null);
@@ -129,30 +127,20 @@ export const Page: React.FC<PageProps> = ({
     e.preventDefault();
     e.stopPropagation();
     
-    // Calculate position relative to the page container
-    if (containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-        onSetActiveFrameId(frameId);
-        setContextMenu({ x, y, frameId });
-        setPageContextMenu(null);
-        onContextMenuOpen(true);
-    }
+    // Position relative to screen (viewport) for Portal
+    onSetActiveFrameId(frameId);
+    setContextMenu({ x: e.clientX, y: e.clientY, frameId });
+    setPageContextMenu(null);
+    onContextMenuOpen(true);
   };
 
   const handlePageContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
     if (draggingFrame || resizingFrame) return;
     
-    if (containerRef.current) {
-       const rect = containerRef.current.getBoundingClientRect();
-       const x = e.clientX - rect.left;
-       const y = e.clientY - rect.top;
-       setPageContextMenu({ x, y });
-       setContextMenu(null);
-       onContextMenuOpen(true);
-    }
+    setPageContextMenu({ x: e.clientX, y: e.clientY });
+    setContextMenu(null);
+    onContextMenuOpen(true);
   };
 
   const applyAspectRatio = useCallback((frameId: string, targetVisualRatio: number) => {
@@ -174,12 +162,13 @@ export const Page: React.FC<PageProps> = ({
 
   useEffect(() => {
     const handleGlobalClick = (e: MouseEvent) => {
-        const target = e.target as HTMLElement;
-        if (target.closest('.context-menu-prevent-close')) return;
+        // If right click (button 2) is detected anywhere, close the menu first
+        // The new context menu event will fire after and open the new one
         if (contextMenu || pageContextMenu) {
             closeMenus();
         }
     };
+    // Listen for mousedown to catch clicks outside or right-clicks
     window.addEventListener('mousedown', handleGlobalClick);
     return () => window.removeEventListener('mousedown', handleGlobalClick);
   }, [contextMenu, pageContextMenu, closeMenus]);
@@ -306,8 +295,6 @@ export const Page: React.FC<PageProps> = ({
     return () => { window.removeEventListener('mousemove', handleMouseMove); window.removeEventListener('mouseup', handleMouseUp); };
   }, [draggingFrame, resizingFrame, pageIndex, onUpdateFrame, config.frames, ratio, isRightPage]);
 
-  const allowOverflow = !isRightPage && config.frames.some(f => f.width > 100 || f.isSpread);
-
   return (
     <div 
       ref={containerRef}
@@ -319,134 +306,144 @@ export const Page: React.FC<PageProps> = ({
       className={`bg-white relative flex flex-col z-20 ${isRightPage ? 'border-l border-slate-300' : ''}`}
       style={{ width: `${width}px`, height: `${width / (ratio || 1)}px` }}
     >
-      {/* Context Menu Rendered Inline to Scroll with Page */}
-      {contextMenu && (
-        <div 
-          className="absolute z-[9999] bg-[#1a1a1a] border border-[#333] rounded-lg shadow-2xl py-1 min-w-[180px] overflow-hidden context-menu-prevent-close"
-          style={{ top: contextMenu.y, left: contextMenu.x }}
-          onClick={(e) => e.stopPropagation()}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <div className="px-3 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-widest border-b border-[#333] mb-1">Frame Options</div>
-          
-          <button 
-            className="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider hover:bg-slate-800 transition-colors flex items-center gap-2"
-            onClick={() => { onDuplicateFrame(pageIndex, contextMenu.frameId); closeMenus(); }}
-          >
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"/></svg>
-            Duplicate Frame
-          </button>
-
-          <button 
-            className="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider hover:bg-slate-800 transition-colors flex items-center gap-2"
-            onClick={() => { onToggleSpread(pageIndex, contextMenu.frameId); closeMenus(); }}
-          >
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"/></svg>
-            {config.frames.find(f => f.id === contextMenu.frameId)?.isSpread ? 'Contract to Page' : 'Make Full Spread'}
-          </button>
-
-          <button 
-            className="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider hover:bg-blue-600 transition-colors"
-            onClick={() => {
-              const frame = config.frames.find(f => f.id === contextMenu.frameId);
-              if (frame) onUpdateFrame(pageIndex, frame.id, { isLocked: !frame.isLocked });
+      {/* Context Menu Rendered via Portal with a Click-Catching Overlay */}
+      {contextMenu && createPortal(
+        <>
+          {/* Transparent full-screen overlay to catch clicks and close menu */}
+          <div 
+            className="fixed inset-0 z-[9998] cursor-default" 
+            onMouseDown={(e) => {
+              if (e.button === 2) return; 
+              e.stopPropagation();
               closeMenus();
             }}
-          >
-            {config.frames.find(f => f.id === contextMenu.frameId)?.isLocked ? 'Unlock Aspect Ratio' : 'Lock Aspect Ratio'}
-          </button>
-
-          <div className="px-3 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-widest border-y border-[#333] my-1">Set Aspect Ratio</div>
+            onContextMenu={(e) => {
+              e.preventDefault(); 
+              closeMenus();
+            }}
+          />
           
-          {ASPECT_PRESETS.map((p) => (
+          <div 
+            className="fixed z-[9999] bg-[#1a1a1a] border border-[#333] rounded-lg shadow-2xl py-1 min-w-[180px] overflow-hidden"
+            style={{ top: contextMenu.y, left: contextMenu.x }}
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onContextMenu={(e) => e.preventDefault()}
+          >
+            <div className="px-3 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-widest border-b border-[#333] mb-1">Frame Options</div>
+            
             <button 
-              key={p.label}
-              className="w-full text-left px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider hover:bg-slate-800 transition-colors flex justify-between items-center"
-              onClick={() => applyAspectRatio(contextMenu.frameId, p.ratio)}
+              className="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider hover:bg-slate-800 transition-colors flex items-center gap-2"
+              onClick={() => { onDuplicateFrame(pageIndex, contextMenu.frameId); closeMenus(); }}
             >
-              {p.label}
-              <span className="text-[8px] text-slate-500 font-normal">{p.ratio.toFixed(2)}</span>
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"/></svg>
+              Duplicate Frame
             </button>
-          ))}
-          
-           <div className="px-4 py-2 border-t border-[#333]">
-             <div className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Custom Ratio</div>
-             <div className="flex items-center gap-1.5">
-               <div className="flex-1 flex bg-[#0d0d0d] border border-[#333] rounded overflow-hidden h-7">
-                  <input 
-                    type="number" min="0.1" step="0.5" value={customRatioValues.w}
-                    onChange={(e) => { const val = parseFloat(e.target.value); if(!isNaN(val)) setCustomRatioValues(prev => ({...prev, w: val})); }}
-                    className="w-full h-full bg-transparent text-white text-[10px] font-bold text-center outline-none border-none p-0 appearance-none"
-                  />
-                  <div className="flex flex-col border-l border-[#333] shrink-0 w-4">
-                     <button onClick={() => setCustomRatioValues(p => ({...p, w: (Number(p.w)||0) + 0.5}))} className="h-1/2 flex items-center justify-center hover:bg-[#222] text-slate-400 transition-colors"><svg className="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 15l7-7 7 7"/></svg></button>
-                     <button onClick={() => setCustomRatioValues(p => ({...p, w: Math.max(0.1, (Number(p.w)||0) - 0.5)}))} className="h-1/2 flex items-center justify-center hover:bg-[#222] text-slate-400 border-t border-[#333] transition-colors"><svg className="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M19 9l-7 7-7-7"/></svg></button>
-                  </div>
-               </div>
-               <span className="text-[10px] text-slate-600 font-bold">:</span>
-               <div className="flex-1 flex bg-[#0d0d0d] border border-[#333] rounded overflow-hidden h-7">
-                  <input 
-                    type="number" min="0.1" step="0.5" value={customRatioValues.h}
-                    onChange={(e) => { const val = parseFloat(e.target.value); if(!isNaN(val)) setCustomRatioValues(prev => ({...prev, h: val})); }}
-                    className="w-full h-full bg-transparent text-white text-[10px] font-bold text-center outline-none border-none p-0 appearance-none"
-                  />
-                  <div className="flex flex-col border-l border-[#333] shrink-0 w-4">
-                     <button onClick={() => setCustomRatioValues(p => ({...p, h: (Number(p.h)||0) + 0.5}))} className="h-1/2 flex items-center justify-center hover:bg-[#222] text-slate-400 transition-colors"><svg className="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 15l7-7 7 7"/></svg></button>
-                     <button onClick={() => setCustomRatioValues(p => ({...p, h: Math.max(0.1, (Number(p.h)||0) - 0.5)}))} className="h-1/2 flex items-center justify-center hover:bg-[#222] text-slate-400 border-t border-[#333] transition-colors"><svg className="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M19 9l-7 7-7-7"/></svg></button>
-                  </div>
-               </div>
-               <button onClick={() => { if(customRatioValues.w > 0 && customRatioValues.h > 0) applyAspectRatio(contextMenu.frameId, customRatioValues.w / customRatioValues.h); }} className="w-7 h-7 flex items-center justify-center bg-blue-600 hover:bg-blue-500 text-white rounded shadow-lg ml-1 shrink-0"><svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"/></svg></button>
-             </div>
+
+            <button 
+              className="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider hover:bg-blue-600 transition-colors"
+              onClick={() => {
+                const frame = config.frames.find(f => f.id === contextMenu.frameId);
+                if (frame) onUpdateFrame(pageIndex, frame.id, { isLocked: !frame.isLocked });
+                closeMenus();
+              }}
+            >
+              {config.frames.find(f => f.id === contextMenu.frameId)?.isLocked ? 'Unlock Aspect Ratio' : 'Lock Aspect Ratio'}
+            </button>
+
+            <div className="px-3 py-1.5 text-[8px] font-black text-slate-500 uppercase tracking-widest border-y border-[#333] my-1">Set Aspect Ratio</div>
+            
+            {ASPECT_PRESETS.map((p) => (
+              <button 
+                key={p.label}
+                className="w-full text-left px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider hover:bg-slate-800 transition-colors flex justify-between items-center"
+                onClick={() => applyAspectRatio(contextMenu.frameId, p.ratio)}
+              >
+                {p.label}
+                <span className="text-[8px] text-slate-500 font-normal">{p.ratio.toFixed(2)}</span>
+              </button>
+            ))}
+            
+            <div className="px-4 py-2 border-t border-[#333]">
+              <div className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Custom Ratio</div>
+              <div className="flex items-center gap-1.5">
+                <div className="flex-1 flex bg-[#0d0d0d] border border-[#333] rounded overflow-hidden h-7">
+                    <input 
+                      type="number" min="0.1" step="0.5" value={customRatioValues.w}
+                      onChange={(e) => { const val = parseFloat(e.target.value); if(!isNaN(val)) setCustomRatioValues(prev => ({...prev, w: val})); }}
+                      className="w-full h-full bg-transparent text-white text-[10px] font-bold text-center outline-none border-none p-0 appearance-none"
+                    />
+                    <div className="flex flex-col border-l border-[#333] shrink-0 w-4">
+                      <button onClick={() => setCustomRatioValues(p => ({...p, w: (Number(p.w)||0) + 0.5}))} className="h-1/2 flex items-center justify-center hover:bg-[#222] text-slate-400 transition-colors"><svg className="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 15l7-7 7 7"/></svg></button>
+                      <button onClick={() => setCustomRatioValues(p => ({...p, w: Math.max(0.1, (Number(p.w)||0) - 0.5)}))} className="h-1/2 flex items-center justify-center hover:bg-[#222] text-slate-400 border-t border-[#333] transition-colors"><svg className="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M19 9l-7 7-7-7"/></svg></button>
+                    </div>
+                </div>
+                <span className="text-[10px] text-slate-600 font-bold">:</span>
+                <div className="flex-1 flex bg-[#0d0d0d] border border-[#333] rounded overflow-hidden h-7">
+                    <input 
+                      type="number" min="0.1" step="0.5" value={customRatioValues.h}
+                      onChange={(e) => { const val = parseFloat(e.target.value); if(!isNaN(val)) setCustomRatioValues(prev => ({...prev, h: val})); }}
+                      className="w-full h-full bg-transparent text-white text-[10px] font-bold text-center outline-none border-none p-0 appearance-none"
+                    />
+                    <div className="flex flex-col border-l border-[#333] shrink-0 w-4">
+                      <button onClick={() => setCustomRatioValues(p => ({...p, h: (Number(p.h)||0) + 0.5}))} className="h-1/2 flex items-center justify-center hover:bg-[#222] text-slate-400 transition-colors"><svg className="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 15l7-7 7 7"/></svg></button>
+                      <button onClick={() => setCustomRatioValues(p => ({...p, h: Math.max(0.1, (Number(p.h)||0) - 0.5)}))} className="h-1/2 flex items-center justify-center hover:bg-[#222] text-slate-400 border-t border-[#333] transition-colors"><svg className="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M19 9l-7 7-7-7"/></svg></button>
+                    </div>
+                </div>
+                <button onClick={() => { if(customRatioValues.w > 0 && customRatioValues.h > 0) applyAspectRatio(contextMenu.frameId, customRatioValues.w / customRatioValues.h); }} className="w-7 h-7 flex items-center justify-center bg-blue-600 hover:bg-blue-500 text-white rounded shadow-lg ml-1 shrink-0"><svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"/></svg></button>
+              </div>
+            </div>
+
+            <div className="h-px bg-[#333] my-1" />
+
+            {config.frames.find(f => f.id === contextMenu.frameId)?.imageId && (
+              <>
+              <button 
+                className="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider hover:bg-slate-800 transition-colors flex items-center gap-2"
+                onClick={() => {
+                  const frame = config.frames.find(f => f.id === contextMenu.frameId);
+                  const image = libraryImages.find(img => img.id === frame?.imageId);
+                  if (frame && image) {
+                      const imgRatio = image.aspectRatio || 1;
+                      const newHeight = frame.width * (ratio / imgRatio);
+                      onUpdateFrame(pageIndex, frame.id, { height: newHeight, isLocked: true });
+                  }
+                  closeMenus();
+                }}
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"/></svg>
+                Match Frame to Image
+              </button>
+
+              <button 
+                className="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-300 hover:bg-slate-800 transition-colors flex items-center gap-2"
+                onClick={() => {
+                  onUpdateFrame(pageIndex, contextMenu.frameId, { imageId: null });
+                  closeMenus();
+                }}
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12"/></svg>
+                Remove Photo
+              </button>
+              </>
+            )}
+            
+            <button 
+              className="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-red-500 hover:bg-red-600 hover:text-white transition-colors"
+              onClick={() => {
+                onDeleteFrame(pageIndex, contextMenu.frameId);
+                closeMenus();
+              }}
+            >
+              Delete Frame
+            </button>
           </div>
-
-          <div className="h-px bg-[#333] my-1" />
-
-          {config.frames.find(f => f.id === contextMenu.frameId)?.imageId && (
-             <>
-             <button 
-               className="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider hover:bg-slate-800 transition-colors flex items-center gap-2"
-               onClick={() => {
-                 const frame = config.frames.find(f => f.id === contextMenu.frameId);
-                 const image = libraryImages.find(img => img.id === frame?.imageId);
-                 if (frame && image) {
-                    const imgRatio = image.aspectRatio || 1;
-                    const newHeight = frame.width * (ratio / imgRatio);
-                    onUpdateFrame(pageIndex, frame.id, { height: newHeight, isLocked: true });
-                 }
-                 closeMenus();
-               }}
-             >
-               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"/></svg>
-               Match Frame to Image
-             </button>
-
-             <button 
-               className="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-300 hover:bg-slate-800 transition-colors flex items-center gap-2"
-               onClick={() => {
-                 onUpdateFrame(pageIndex, contextMenu.frameId, { imageId: null });
-                 closeMenus();
-               }}
-             >
-               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12"/></svg>
-               Remove Photo
-             </button>
-             </>
-          )}
-          
-          <button 
-            className="w-full text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-red-500 hover:bg-red-600 hover:text-white transition-colors"
-            onClick={() => {
-              onDeleteFrame(pageIndex, contextMenu.frameId);
-              closeMenus();
-            }}
-          >
-            Delete Frame
-          </button>
-        </div>
+        </>,
+        document.body
       )}
 
-      {/* Internal Content Container - Handles clipping if allowOverflow is false */}
-      <div className={`absolute inset-0 w-full h-full ${allowOverflow ? 'overflow-visible' : 'overflow-hidden'}`}>
+      {/* Internal Content Container - ALWAYS visible overflow to support cross-spread dragging */}
+      <div className="absolute inset-0 w-full h-full overflow-visible">
         {/* Margin / Safe Area Overlay */}
         {config.margin > 0 && (
            <div 

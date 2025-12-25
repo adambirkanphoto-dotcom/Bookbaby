@@ -8,7 +8,6 @@ import { Page } from './components/Page';
 import { Tooltip } from './components/Tooltip';
 
 // --- Custom Dimension Modal ---
-// ... (No changes to CustomDimensionModal, keep as is but I need to include it in the file content for context)
 interface CustomDimensionModalProps {
   onClose: () => void;
   onApply: (width: number, height: number) => void;
@@ -85,7 +84,6 @@ interface PageActionBarProps {
   updatePageMargin: (index: number, margin: number) => void;
 }
 
-// ... (Keep PageActionBar as is)
 const PageActionBar: React.FC<PageActionBarProps> = ({ 
   index, 
   config, 
@@ -481,20 +479,11 @@ const App: React.FC = () => {
   }, [currentRatio]);
 
   const createInitialPageConfig = useCallback((id: string, margin: number): PageConfig => {
-    let w = 60; 
-    let h = w * currentRatio; 
-    if (h > 80) { h = 80; w = h / currentRatio; }
-    
     return {
       id, margin,
-      frames: [{
-        id: `f-${Math.random().toString(36).substr(2, 9)}`,
-        imageId: null,
-        x: (100 - w) / 2, y: (100 - h) / 2, width: w, height: h, zIndex: 1,
-        cropType: 'fill', scale: 1, offset: { x: 50, y: 50 }, isLocked: true
-      }]
+      frames: []
     };
-  }, [currentRatio]);
+  }, []);
 
   useEffect(() => {
     if (pageConfigs.length === 0) {
@@ -537,11 +526,15 @@ const App: React.FC = () => {
       const marginPctX = (page.margin / 16) * 100;
       const marginPctY = marginPctX * currentRatio;
       
-      const w = 30;
-      const h = w * currentRatio;
+      const w = 50;
+      const h = 50;
       
       let finalX = x !== undefined ? x - (w / 2) : (100 - w) / 2;
       let finalY = y !== undefined ? y - (h / 2) : (100 - h) / 2;
+
+      // Clamp bounds
+      finalX = Math.max(0, Math.min(100 - w, finalX));
+      finalY = Math.max(0, Math.min(100 - h, finalY));
 
       const newFrame: Frame = {
         id: `f-${Math.random().toString(36).substr(2, 9)}`,
@@ -972,22 +965,45 @@ const App: React.FC = () => {
          const p2Id = `p${nextConfigs.length + 2}-${Date.now()}`;
          const page1 = createInitialPageConfig(p1Id, globalBleedValue);
          const page2 = createInitialPageConfig(p2Id, globalBleedValue);
+         
          if (imageIndex < selectedImages.length) {
              const img = selectedImages[imageIndex];
-             page1.frames[0].imageId = img.id;
              const imgRatio = img.aspectRatio || 1;
-             const pageRatio = currentRatio;
-             page1.frames[0].height = page1.frames[0].width * (pageRatio / imgRatio);
+             
+             let w = 60;
+             let h = w * (currentRatio / imgRatio);
+             if (h > 80) { h = 80; w = h * (imgRatio / currentRatio); }
+             
+             page1.frames.push({
+                 id: `f-${Math.random().toString(36).substr(2, 9)}`,
+                 imageId: img.id,
+                 x: (100 - w) / 2, y: (100 - h) / 2, 
+                 width: w, height: h, 
+                 zIndex: 1, 
+                 cropType: 'fill', scale: 1, offset: { x: 50, y: 50 }, isLocked: true
+             });
              imageIndex++;
          }
+
          if (imageIndex < selectedImages.length) {
              const img = selectedImages[imageIndex];
-             page2.frames[0].imageId = img.id;
              const imgRatio = img.aspectRatio || 1;
-             const pageRatio = currentRatio;
-             page2.frames[0].height = page2.frames[0].width * (pageRatio / imgRatio);
+             
+             let w = 60;
+             let h = w * (currentRatio / imgRatio);
+             if (h > 80) { h = 80; w = h * (imgRatio / currentRatio); }
+             
+             page2.frames.push({
+                 id: `f-${Math.random().toString(36).substr(2, 9)}`,
+                 imageId: img.id,
+                 x: (100 - w) / 2, y: (100 - h) / 2, 
+                 width: w, height: h, 
+                 zIndex: 1, 
+                 cropType: 'fill', scale: 1, offset: { x: 50, y: 50 }, isLocked: true
+             });
              imageIndex++;
          }
+         
          nextConfigs.push(page1, page2);
       }
       return nextConfigs;
@@ -1195,136 +1211,160 @@ const App: React.FC = () => {
                 </Tooltip>
              </div>
           ) : (
-            <div className="flex-1 overflow-y-auto p-4 grid grid-cols-[repeat(auto-fill,minmax(90px,1fr))] gap-3 auto-rows-max hide-scrollbar">
-                {images.map((img, idx) => (
-                <LibraryItem 
-                    key={img.id} image={img} index={idx} isPlaced={pageConfigs.some(p => p.frames.some(f => f.imageId === img.id))}
-                    isSelected={selectedLibraryImageIds.includes(img.id)}
-                    onClick={() => handleLibraryItemClick(img.id)}
-                    onDragStart={(e) => {
-                    e.dataTransfer.setData('imageId', img.id);
-                    e.dataTransfer.effectAllowed = 'move';
-                    setDraggedLibraryImageId(img.id);
-                    }}
-                    onDragOver={(e, index, side) => {
-                    e.preventDefault();
-                    }}
-                    onDrop={(e, targetIdx) => {
-                    e.preventDefault();
-                    const droppedImageId = e.dataTransfer.getData('imageId');
-                    if (draggedLibraryImageId === droppedImageId) {
-                        handleLibraryReorder(droppedImageId, targetIdx);
-                    }
-                    setDraggedLibraryImageId(null);
-                    }}
-                    onDelete={(id) => setImages(prev => prev.filter(i => i.id !== id))}
-                />
-                ))}
+            <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col">
+                {images.length === 0 ? (
+                    <div className="flex-1 flex flex-col items-center justify-center p-8 text-center m-4">
+                        <div className="w-20 h-20 bg-[#1a1a1a] rounded-full flex items-center justify-center mb-6 shadow-2xl border border-[#333] group hover:border-blue-500/30 hover:bg-[#222] transition-all duration-300">
+                            <svg className="w-8 h-8 text-slate-600 group-hover:text-blue-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                        </div>
+                        <h3 className="text-slate-400 font-bold text-xs uppercase tracking-widest mb-2">No Photos Yet</h3>
+                        <p className="text-[10px] text-slate-600 max-w-[150px] leading-relaxed">Upload photos to start designing your photobook layout.</p>
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-2 gap-3 p-4 pb-20">
+                        {images.map((img, idx) => (
+                            <LibraryItem
+                                key={img.id}
+                                image={img}
+                                index={idx}
+                                isPlaced={pageConfigs.some(p => p.frames.some(f => f.imageId === img.id))}
+                                isSelected={selectedLibraryImageIds.includes(img.id)}
+                                onClick={() => handleLibraryItemClick(img.id)}
+                                onDragStart={(e) => {
+                                    setDraggedLibraryImageId(img.id);
+                                    e.dataTransfer.setData('imageId', img.id);
+                                }}
+                                onDragOver={(e, index, side) => e.preventDefault()}
+                                onDrop={(e, targetIndex) => handleLibraryReorder(draggedLibraryImageId!, targetIndex)}
+                                onDelete={(id) => setImages(prev => prev.filter(i => i.id !== id))}
+                            />
+                        ))}
+                    </div>
+                )}
             </div>
           )}
         </aside>
 
-        {!isSidebarCollapsed && (
-            <div 
-            className="w-1.5 h-full cursor-col-resize hover:bg-blue-600/50 transition-colors z-[35] shrink-0 bg-transparent"
-            onMouseDown={() => setIsResizingSidebar(true)}
-            />
-        )}
-
-        <main 
-          className="flex-1 overflow-y-auto bg-[#080808] hide-scrollbar scroll-smooth"
-          onMouseDown={handleVoidClick}
-        >
-          <div 
-            className="py-24 px-12 flex flex-wrap justify-center gap-x-24 gap-y-48 min-h-full content-start"
-            onMouseDown={handleVoidClick}
-          >
-            {spreads.map((spread, sIdx) => {
-              const leftPageHasSpread = pageConfigs[spread.leftIdx].frames.some(f => f.isSpread);
-              const rightFrames = spread.rightIdx !== null ? pageConfigs[spread.rightIdx].frames : [];
-              const leftFrames = pageConfigs[spread.leftIdx].frames;
-              
-              // Boost Z-index if context menu is active on this page
-              const leftZIndex = activeMenuPageIndex === spread.leftIdx ? 100 : (leftPageHasSpread ? 20 : 1);
-              const rightZIndex = activeMenuPageIndex === spread.rightIdx ? 100 : 1;
-
-              return (
-                <div key={sIdx} className="relative group shrink-0">
-                  <div className="absolute -top-10 left-0 right-0 flex justify-between px-2 opacity-30 group-hover:opacity-100 transition-opacity">
-                     <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Spread {sIdx + 1}</span>
-                     <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Pages {spread.leftIdx + 1} & {spread.rightIdx !== null ? spread.rightIdx + 1 : ''}</span>
-                  </div>
-
-                  <div className="flex bg-white shadow-[0_30px_90px_-20px_rgba(0,0,0,0.8)] rounded-[1px] overflow-visible">
-                     <div className="relative group/page" style={{ zIndex: leftZIndex }}>
-                        <Page 
-                          pageIndex={spread.leftIdx} config={pageConfigs[spread.leftIdx]} 
-                          activeFrameId={activeFrame?.pageIndex === spread.leftIdx ? activeFrame.frameId : null}
-                          onSetActiveFrameId={(id) => setActiveFrame(id ? { pageIndex: spread.leftIdx, frameId: id } : null)}
-                          libraryImages={images} ratio={currentRatio} width={dynamicPageWidth}
-                          onDropImage={onDropImage} onUpdateFrame={onUpdateFrame} onDeleteFrame={onDeleteFrame} 
-                          onDuplicateFrame={onDuplicateFrame} onAddFrame={onAddFrame} onClearPage={onClearPage}
-                          onInteractionStart={saveToHistory}
-                          onToggleSpread={onToggleSpread}
-                          neighborFrames={rightFrames}
-                          onContextMenuOpen={(isOpen) => setActiveMenuPageIndex(isOpen ? spread.leftIdx : null)}
-                        />
-                        <PageActionBar 
-                          index={spread.leftIdx} config={pageConfigs[spread.leftIdx]} 
-                          zoomLevel={zoomLevel} width={dynamicPageWidth}
-                          onAddFrame={onAddFrame} updatePageMargin={updatePageMargin}
-                        />
-                     </div>
-
-                     {spread.rightIdx !== null && (
-                       <div className="relative group/page" style={{ zIndex: rightZIndex }}>
-                          <Page 
-                            pageIndex={spread.rightIdx} config={pageConfigs[spread.rightIdx]} 
-                            activeFrameId={activeFrame?.pageIndex === spread.rightIdx ? activeFrame.frameId : null}
-                            onSetActiveFrameId={(id) => setActiveFrame(id ? { pageIndex: spread.rightIdx, frameId: id } : null)}
-                            libraryImages={images} ratio={currentRatio} width={dynamicPageWidth}
-                            isRightPage onDropImage={onDropImage} onUpdateFrame={onUpdateFrame} onDeleteFrame={onDeleteFrame} 
-                            onDuplicateFrame={onDuplicateFrame} onAddFrame={onAddFrame} onClearPage={onClearPage}
-                            onInteractionStart={saveToHistory}
-                            onToggleSpread={onToggleSpread}
-                            neighborFrames={leftFrames}
-                            onContextMenuOpen={(isOpen) => setActiveMenuPageIndex(isOpen ? spread.rightIdx : null)}
-                          />
-                          <PageActionBar 
-                            index={spread.rightIdx} config={pageConfigs[spread.rightIdx]} 
-                            zoomLevel={zoomLevel} width={dynamicPageWidth}
-                            onAddFrame={onAddFrame} updatePageMargin={updatePageMargin}
-                          />
-                       </div>
-                     )}
-                  </div>
-                </div>
-              );
-            })}
-
-            <div className="w-full flex justify-center py-12">
-              <Tooltip text="Insert two new blank pages">
-                <button 
-                  onClick={addSpread} 
-                  className="px-20 py-10 bg-[#111] border border-dashed border-[#333] rounded-2xl text-slate-600 text-[11px] font-black uppercase tracking-[0.25em] hover:text-white hover:border-blue-500/50 transition-all shadow-xl group"
+        <main className="flex-1 bg-[#0a0a0a] relative overflow-hidden flex flex-col">
+            <div className="flex-1 overflow-auto p-8 flex justify-center items-start custom-scrollbar">
+                <div 
+                    className="flex flex-col gap-12 py-12 transition-all duration-300 origin-top" 
+                    style={{ transform: `scale(${zoomLevel})` }}
+                    onClick={handleVoidClick}
                 >
-                  <span className="group-hover:scale-110 inline-block transition-transform">+ New Spread</span>
-                </button>
-              </Tooltip>
+                    {spreads.map((spread, i) => {
+                        const leftPageHasSpread = pageConfigs[spread.leftIdx].frames.some(f => f.isSpread);
+                        
+                        // Dynamic Z-Index logic to support dragging across spreads
+                        // If a frame is active on a page, that page needs higher z-index than its neighbor
+                        const isLeftActive = activeFrame?.pageIndex === spread.leftIdx;
+                        const isRightActive = spread.rightIdx !== null && activeFrame?.pageIndex === spread.rightIdx;
+                        
+                        // Default stacking: Right page usually sits on top of left page in DOM order.
+                        // We boost z-index if active or if menu is open on that page.
+                        const leftZIndex = (activeMenuPageIndex === spread.leftIdx || isLeftActive) ? 100 : (leftPageHasSpread ? 20 : 1);
+                        const rightZIndex = (activeMenuPageIndex === spread.rightIdx || isRightActive) ? 100 : 1;
+
+                        return (
+                        <div key={i} className="flex relative shadow-[0_0_50px_rgba(0,0,0,0.5)] bg-white">
+                             {/* Left Page */}
+                            <div className="relative group/page" style={{ zIndex: leftZIndex }}>
+                                <Page
+                                    pageIndex={spread.leftIdx}
+                                    config={pageConfigs[spread.leftIdx]}
+                                    activeFrameId={activeFrame?.pageIndex === spread.leftIdx ? activeFrame.frameId : null}
+                                    onSetActiveFrameId={(fid) => setActiveFrame(fid ? { pageIndex: spread.leftIdx, frameId: fid } : null)}
+                                    libraryImages={images}
+                                    ratio={currentRatio}
+                                    width={dynamicPageWidth}
+                                    onDropImage={onDropImage}
+                                    onUpdateFrame={onUpdateFrame}
+                                    onDeleteFrame={onDeleteFrame}
+                                    onDuplicateFrame={onDuplicateFrame}
+                                    onAddFrame={onAddFrame}
+                                    onClearPage={onClearPage}
+                                    onToggleSpread={onToggleSpread}
+                                    neighborFrames={spread.rightIdx !== null ? pageConfigs[spread.rightIdx].frames : []}
+                                    onContextMenuOpen={(isOpen) => setActiveMenuPageIndex(isOpen ? spread.leftIdx : null)}
+                                />
+                                <div className={`absolute bottom-full left-0 mb-2 transition-opacity duration-200 ${activeMenuPageIndex === spread.leftIdx ? 'opacity-0' : 'opacity-100'}`}>
+                                    <span className="text-[10px] font-black text-slate-600 uppercase tracking-widest">Page {spread.leftIdx + 1}</span>
+                                </div>
+                                {activeMenuPageIndex !== spread.leftIdx && (
+                                    <PageActionBar 
+                                        index={spread.leftIdx}
+                                        config={pageConfigs[spread.leftIdx]}
+                                        zoomLevel={zoomLevel}
+                                        onAddFrame={onAddFrame}
+                                        updatePageMargin={updatePageMargin}
+                                    />
+                                )}
+                            </div>
+
+                            {/* Right Page */}
+                            {spread.rightIdx !== null ? (
+                                <div className="relative group/page" style={{ zIndex: rightZIndex }}>
+                                <Page
+                                    pageIndex={spread.rightIdx}
+                                    config={pageConfigs[spread.rightIdx]}
+                                    activeFrameId={activeFrame?.pageIndex === spread.rightIdx ? activeFrame.frameId : null}
+                                    onSetActiveFrameId={(fid) => setActiveFrame(fid ? { pageIndex: spread.rightIdx, frameId: fid } : null)}
+                                    libraryImages={images}
+                                    ratio={currentRatio}
+                                    width={dynamicPageWidth}
+                                    isRightPage
+                                    onDropImage={onDropImage}
+                                    onUpdateFrame={onUpdateFrame}
+                                    onDeleteFrame={onDeleteFrame}
+                                    onDuplicateFrame={onDuplicateFrame}
+                                    onAddFrame={onAddFrame}
+                                    onClearPage={onClearPage}
+                                    onToggleSpread={onToggleSpread}
+                                    neighborFrames={pageConfigs[spread.leftIdx].frames}
+                                    onContextMenuOpen={(isOpen) => setActiveMenuPageIndex(isOpen ? spread.rightIdx : null)}
+                                />
+                                <div className={`absolute bottom-full right-0 mb-2 transition-opacity duration-200 ${activeMenuPageIndex === spread.rightIdx ? 'opacity-0' : 'opacity-100'}`}>
+                                    <span className="text-[10px] font-black text-slate-600 uppercase tracking-widest">Page {spread.rightIdx + 1}</span>
+                                </div>
+                                {activeMenuPageIndex !== spread.rightIdx && (
+                                    <PageActionBar 
+                                        index={spread.rightIdx}
+                                        config={pageConfigs[spread.rightIdx]}
+                                        zoomLevel={zoomLevel}
+                                        onAddFrame={onAddFrame}
+                                        updatePageMargin={updatePageMargin}
+                                    />
+                                )}
+                                </div>
+                            ) : (
+                                <div 
+                                    className="bg-[#111] flex items-center justify-center border-l border-[#222]"
+                                    style={{ width: `${dynamicPageWidth}px`, height: `${dynamicPageWidth / (currentRatio || 1)}px` }}
+                                >
+                                    <span className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Back Cover / End</span>
+                                </div>
+                            )}
+
+                            {/* Spine Indicator */}
+                            <div className="absolute top-0 bottom-0 left-1/2 w-px bg-black/10 z-10" />
+                        </div>
+                    )})}
+                    
+                    <div className="flex justify-center w-full pt-8 pb-20">
+                         <button 
+                            onClick={addSpread}
+                            className="group flex flex-col items-center gap-3 opacity-60 hover:opacity-100 transition-all"
+                         >
+                            <div className="w-12 h-12 rounded-full border-2 border-dashed border-slate-600 group-hover:border-blue-500 group-hover:bg-blue-600/10 flex items-center justify-center text-slate-500 group-hover:text-blue-500 transition-all">
+                                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg>
+                            </div>
+                            <span className="text-[10px] font-black text-slate-500 group-hover:text-blue-400 uppercase tracking-widest">Add Spread</span>
+                         </button>
+                    </div>
+                </div>
             </div>
-          </div>
         </main>
       </div>
-
-      <footer className="h-8 border-t bg-[#0d0d0d] border-[#1a1a1a] px-6 flex items-center justify-between shrink-0 text-slate-600 text-[8px] font-black uppercase tracking-widest">
-         <div className="flex gap-6">
-            <span>Project: <span className="text-slate-400">{exportDefaultName}</span></span>
-            <span>Pages: <span className="text-white">{pageConfigs.length}</span></span>
-         </div>
-         <div className="flex gap-4">
-            <span>Powered by BookBaby Engine</span>
-         </div>
-      </footer>
     </div>
   );
 };
